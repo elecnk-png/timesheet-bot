@@ -1,89 +1,46 @@
 import logging
 import sqlite3
-import pandas as pd
 from datetime import datetime, date, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    Application,
-    CommandHandler,
-    CallbackQueryHandler,
-    ConversationHandler,
-    MessageHandler,
-    filters,
-    ContextTypes
-)
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ConversationHandler, MessageHandler, filters, ContextTypes
 import os
 from dotenv import load_dotenv
 
-# Загрузка переменных окружения
+# Загрузка токена
 load_dotenv()
-
-# Токен бота
 BOT_TOKEN = os.getenv('BOT_TOKEN')
 
 # Настройка логирования
-logging.basicConfig(
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
 logger = logging.getLogger(name)
 
-# Состояния для разговоров
-REGISTER_NAME, REGISTER_POSITION, SELECT_DATE, SELECT_STATUS = range(4)
+# Состояния для регистрации
+REGISTER_NAME, REGISTER_POSITION = range(2)
 
 # Инициализация базы данных
 def init_database():
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
-    
-    # Таблица сотрудников
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS employees (
-            user_id INTEGER PRIMARY KEY,
-            full_name TEXT NOT NULL,
-            position TEXT NOT NULL,
-            registration_date TEXT NOT NULL,
-            is_admin INTEGER DEFAULT 0
-        )
-    ''')
-    
-    # Таблица записей табеля
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS timesheet (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            date TEXT NOT NULL,
-            status TEXT NOT NULL,
-            check_in TEXT,
-            check_out TEXT,
-            hours_worked REAL,
-            notes TEXT,
-            created_at TEXT NOT NULL,
-            UNIQUE(user_id, date)
-        )
-    ''')
-    
-    # Таблица настроек
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS settings (
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        )
-    ''')
-    
+    cursor.execute('''CREATE TABLE IF NOT EXISTS employees 
+                      (user_id INTEGER PRIMARY KEY, full_name TEXT, position TEXT, reg_date TEXT, is_admin INTEGER DEFAULT 0)''')
+    cursor.execute('''CREATE TABLE IF NOT EXISTS timesheet 
+                      (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, date TEXT, status TEXT, 
+                       check_in TEXT, check_out TEXT, hours REAL, notes TEXT)''')
     conn.commit()
     conn.close()
 
-# Функции для работы с БД
-def add_employee(user_id, full_name, position, is_admin=0):
+# Функции БД
+def add_employee(user_id, name, position):
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
-    cursor.execute(
-        'INSERT OR REPLACE INTO employees (user_id, full_name, position, registration_date, is_admin) VALUES (?, ?, ?, ?, ?)',
-        (user_id, full_name, position, datetime.now().isoformat(), is_admin)
-    )
+    cursor.execute('SELECT COUNT(*) FROM employees')
+    count = cursor.fetchone()[0]
+    is_admin = 1 if count == 0 else 0
+    cursor.execute('INSERT OR REPLACE INTO employees VALUES (?, ?, ?, ?, ?)',
+                  (user_id, name, position, datetime.now().isoformat(), is_admin))
     conn.commit()
     conn.close()
+    return is_admin
 
 def get_employee(user_id):
     conn = sqlite3.connect('timesheet.db')
@@ -93,41 +50,47 @@ def get_employee(user_id):
     conn.close()
     return result
 
-def add_timesheet_entry(user_id, date_str, status, notes='', check_in=None, check_out=None):
+def add_checkin(user_id):
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
-    
-    hours_worked = None
-    if check_in and check_out:
-        try:
-            start = datetime.strptime(check_in, '%H:%M')
-            end = datetime.strptime(check_out, '%H:%M')
-            hours_worked = (end - start).seconds / 3600
-        except:
-            pass
-    
-    cursor.execute('''
-        INSERT OR REPLACE INTO timesheet 
-        (user_id, date, status, check_in, check_out, hours_worked, notes, created_at) 
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (user_id, date_str, status, check_in, check_out, hours_worked, notes, datetime.now().isoformat()))
-    
+    today = date.today().isoformat()
+    now = datetime.now().strftime('%H:%M')
+    cursor.execute('INSERT OR REPLACE INTO timesheet (user_id, date, status, check_in) VALUES (?, ?, ?, ?)',
+                  (user_id, today, 'working', now))
     conn.commit()
     conn.close()
+    return now
 
-def get_employee_timesheet(user_id, start_date=None, end_date=None):
+def add_checkout(user_id):
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
+    today = date.today().isoformat()
+    now = datetime.now().strftime('%H:%M')
     
-    if start_date and end_date:
-        cursor.execute('''
-            SELECT * FROM timesheet 
-            WHERE user_id = ? AND date BETWEEN ? AND ?
-            ORDER BY date DESC
-        ''', (user_id, start_date, end_date))
-    else:
-        cursor.execute('SELECT * FROM timesheet WHERE user_id = ? ORDER BY date DESC', (user_id,))
+    cursor.execute('SELECT * FROM timesheet WHERE user_id = ? AND date = ?', (user_id, today))
+    entry = cursor.fetchone()
     
+    if entry:
+        check_in = entry[4]
+        check_in_time = datetime.strptime(check_in, '%H:%M')
+        check_out_time = datetime.strptime(now, '%H:%M')
+        hours = (check_out_time - check_in_time).seconds / 3600
+        
+        cursor.execute('''UPDATE timesheet SET status = ?, check_out = ?, hours = ? 
+                          WHERE user_id = ? AND date = ?''',
+                      ('completed', now, hours, user_id, today))
+        conn.commit()
+        conn.close()
+        return now, hours
+    conn.close()
+    return None, None
+
+def get_timesheet(user_id, days=7):
+    conn = sqlite3.connect('timesheet.db')
+    cursor = conn.cursor()
+    start_date = (date.today() - timedelta(days=days)).isoformat()
+    cursor.execute('''SELECT * FROM timesheet WHERE user_id = ? AND date >= ? 
+                      ORDER BY date DESC''', (user_id, start_date))
     result = cursor.fetchall()
     conn.close()
     return result
@@ -140,15 +103,12 @@ def get_all_employees():
     conn.close()
     return result
 
-def get_all_timesheet():
+def get_all_timesheet(limit=20):
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
-    cursor.execute('''
-        SELECT t.*, e.full_name, e.position 
-        FROM timesheet t 
-        JOIN employees e ON t.user_id = e.user_id 
-        ORDER BY t.date DESC, e.full_name
-    ''')
+    cursor.execute('''SELECT e.full_name, e.position, t.date, t.status, t.hours 
+                      FROM timesheet t JOIN employees e ON t.user_id = e.user_id
+                      ORDER BY t.date DESC LIMIT ?''', (limit,))
     result = cursor.fetchall()
     conn.close()
     return result
@@ -159,44 +119,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     employee = get_employee(user_id)
     
     if employee:
+        admin_star = " 👑" if employee[4] == 1 else ""
         await update.message.reply_text(
-            f"👋 С возвращением, {employee[1]}!\n\n"
-            "Доступные команды:\n"
-            "/checkin - Отметить начало рабочего дня\n"
-            "/checkout - Отметить конец рабочего дня\n"
+            f"👋 С возвращением, {employee[1]}{admin_star}!\n\n"
+            "📋 Доступные команды:\n"
+            "/checkin - Начать рабочий день\n"
+            "/checkout - Закончить рабочий день\n"
             "/timesheet - Мой табель\n"
-            "/report - Отчет за период\n"
             "/stats - Моя статистика\n"
             "/help - Помощь"
         )
     else:
-        keyboard = [[InlineKeyboardButton("Зарегистрироваться", callback_data="register")]]
-        reply_markup = InlineKeyboardMarkup(keyboard)
+        keyboard = [[InlineKeyboardButton("📝 Зарегистрироваться", callback_data="register")]]
         await update.message.reply_text(
-            "Добро пожаловать! Для работы с ботом необходимо зарегистрироваться.",
-            reply_markup=reply_markup
+            "Добро пожаловать! Для работы необходимо зарегистрироваться.",
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    help_text = """
-    📋 *Команды бота табеля:*
-    
-    /start - Начать работу с ботом
-    /checkin - Отметить начало рабочего дня
-    /checkout - Отметить конец рабочего дня
-    /timesheet - Просмотреть свой табель
-    /report - Сформировать отчет за период
-    /stats - Показать статистику
-    /help - Показать это сообщение
-    
-    *Для администраторов:*
-    /admin - Панель администратора
-    /export - Экспорт табеля в Excel
-    /all_employees - Список всех сотрудников
-    """
-    await update.message.reply_text(help_text, parse_mode='Markdown')
-
-# Регистрация
 async def register_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -204,291 +143,153 @@ async def register_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return REGISTER_NAME
 
 async def register_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    context.user_data['full_name'] = update.message.text
+    context.user_data['name'] = update.message.text
     await update.message.reply_text("Введите вашу должность:")
     return REGISTER_POSITION
 
 async def register_position(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    full_name = context.user_data['full_name']
+    name = context.user_data['name']
     position = update.message.text
     
-    # Проверяем, является ли пользователь админом (первый пользователь становится админом)
-    employees = get_all_employees()
-    is_admin = 1 if len(employees) == 0 else 0
+    is_admin = add_employee(user_id, name, position)
     
-    add_employee(user_id, full_name, position, is_admin)
+    admin_text = "\n\n👑 Вы первый пользователь, поэтому вы назначены администратором!" if is_admin else ""
     
     await update.message.reply_text(
-        f"✅ Регистрация завершена!\n\n"
-        f"Имя: {full_name}\n"
-        f"Должность: {position}\n\n"
-        f"Теперь вы можете использовать команды бота."
+        f"✅ Регистрация завершена!\n"
+        f"Имя: {name}\n"
+        f"Должность: {position}{admin_text}"
     )
     return ConversationHandler.END
 
-# Отметка начала рабочего дня
 async def checkin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    employee = get_employee(user_id)
-    
-    if not employee:
+    if not get_employee(user_id):
         await update.message.reply_text("❌ Сначала зарегистрируйтесь через /start")
         return
     
-    today = date.today().isoformat()
-    current_time = datetime.now().strftime('%H:%M')
-    
-    add_timesheet_entry(
-        user_id=user_id,
-        date_str=today,
-        status='working',
-        check_in=current_time
-    )
-    
-    await update.message.reply_text(f"✅ Начало рабочего дня отмечено в {current_time}")
+    time = add_checkin(user_id)
+    await update.message.reply_text(f"✅ Начало рабочего дня отмечено в {time}")
 
-# Отметка конца рабочего дня
 async def checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-user_id = update.effective_user.id
-    employee = get_employee(user_id)
-    
-    if not employee:
+    user_id = update.effective_user.id
+    if not get_employee(user_id):
         await update.message.reply_text("❌ Сначала зарегистрируйтесь через /start")
         return
     
-    today = date.today().isoformat()
-    current_time = datetime.now().strftime('%H:%M')
-    
-    # Получаем запись за сегодня
-    entries = get_employee_timesheet(user_id, today, today)
-    
-    if entries:
-        add_timesheet_entry(
-            user_id=user_id,
-            date_str=today,
-            status='completed',
-            check_in=entries[0][4],
-            check_out=current_time
-        )
-        await update.message.reply_text(f"✅ Конец рабочего дня отмечен в {current_time}")
+    time, hours = add_checkout(user_id)
+    if time:
+        await update.message.reply_text(f"✅ Конец рабочего дня отмечен в {time}\n⏱ Отработано часов: {hours:.1f}")
     else:
-        await update.message.reply_text("❌ Сначала отметьте начало рабочего дня через /checkin")
+        await update.message.reply_text("❌ Сначала отметьте начало дня через /checkin")
 
-# Просмотр табеля
-async def view_timesheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def timesheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     employee = get_employee(user_id)
-    
     if not employee:
-        await update.message.reply_text("❌ Сначала зарегистрируйтесь через /start")
+        await update.message.reply_text("❌ Сначала зарегистрируйтесь")
         return
     
-    # Получаем записи за последние 30 дней
-    end_date = date.today().isoformat()
-    start_date = (date.today() - timedelta(days=30)).isoformat()
-    
-    entries = get_employee_timesheet(user_id, start_date, end_date)
-    
+    entries = get_timesheet(user_id)
     if not entries:
-        await update.message.reply_text("📊 За последние 30 дней записей нет")
+        await update.message.reply_text("📊 За последние 7 дней записей нет")
         return
     
-    message = f"📋 *Табель сотрудника {employee[1]}*\n\n"
-    for entry in entries:
-        entry_date = datetime.strptime(entry[2], '%Y-%m-%d').strftime('%d.%m.%Y')
-        status = entry[3]
-        
-        if status == 'working':
-            status_emoji = "⏳"
-        elif status == 'completed':
-            status_emoji = "✅"
-        elif status == 'absent':
-            status_emoji = "❌"
-        elif status == 'vacation':
-            status_emoji = "🏖"
-        elif status == 'sick':
-            status_emoji = "🤒"
-        else:
-            status_emoji = "📝"
-        
-        message += f"{entry_date} {status_emoji} {status.capitalize()}\n"
-        
-        if entry[4]:  # check_in
-            message += f"   Начало: {entry[4]}\n"
-        if entry[5]:  # check_out
-            message += f"   Конец: {entry[5]}\n"
-        if entry[6]:  # hours_worked
-            message += f"   Часов: {entry[6]:.1f}\n"
-        if entry[7]:  # notes
-            message += f"   Примечание: {entry[7]}\n"
-        
-        message += "\n"
+    msg = f"📋 *Табель {employee[1]}*\n\n"
+    for e in entries:
+        date_obj = datetime.strptime(e[2], '%Y-%m-%d').strftime('%d.%m.%Y')
+        status = "✅" if e[3] == 'completed' else "⏳"
+        hours = f"({e[6]:.1f}ч)" if e[6] else ""
+        msg += f"{date_obj} {status} {e[4]}-{e[5] or '...'} {hours}\n"
     
-    await update.message.reply_text(message, parse_mode='Markdown')
+    await update.message.reply_text(msg, parse_mode='Markdown')
 
-# Статистика
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     employee = get_employee(user_id)
-    
     if not employee:
-        await update.message.reply_text("❌ Сначала зарегистрируйтесь через /start")
+        await update.message.reply_text("❌ Сначала зарегистрируйтесь")
         return
     
-    # Получаем записи за последние 30 дней
-    end_date = date.today().isoformat()
-    start_date = (date.today() - timedelta(days=30)).isoformat()
+    entries = get_timesheet(user_id, 30)
+    total_hours = sum(e[6] for e in entries if e[6])
+    days_worked = len([e for e in entries if e[3] == 'completed'])
+    avg_hours = total_hours / days_worked if days_worked > 0 else 0
     
-    entries = get_employee_timesheet(user_id, start_date, end_date)
-    
-    if not entries:
-        await update.message.reply_text("📊 За последние 30 дней записей нет")
-        return
-    
-    total_hours = 0
-    working_days = 0
-    completed_days = 0
-    
-    for entry in entries:
-        if entry[6]:  # hours_worked
-            total_hours += entry[6]
-        if entry[3] == 'working':
-            working_days += 1
-        elif entry[3] == 'completed':
-            completed_days += 1
-            if entry[6]:
-                total_hours += entry[6]
-    
-    avg_hours = total_hours / max(completed_days, 1)
-    
-    message = f"""
+    msg = f"""
 📊 *Статистика за 30 дней*
 
-👤 Сотрудник: {employee[1]}
-📅 Отработанных дней: {completed_days}
-⏳ Текущих дней: {working_days}
+👤 {employee[1]}
+📅 Отработано дней: {days_worked}
 ⏱ Всего часов: {total_hours:.1f}
-📈 Среднее часов в день: {avg_hours:.1f}
+📈 Среднее часов: {avg_hours:.1f}
     """
-    
-    await update.message.reply_text(message, parse_mode='Markdown')
+    await update.message.reply_text(msg, parse_mode='Markdown')
 
-# Команды администратора
-async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    help_text = """
+📋 *Команды бота:*
+
+/start - Начать работу
+/checkin - Начать рабочий день
+/checkout - Закончить рабочий день
+/timesheet - Мой табель
+/stats - Статистика
+/help - Помощь
+
+👑 *Администратору:*
+/admin - Панель управления
+    """
+    await update.message.reply_text(help_text, parse_mode='Markdown')
+
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     employee = get_employee(user_id)
-    
-    if not employee or employee[5] != 1:  # Проверка на админа
-        await update.message.reply_text("❌ У вас нет прав администратора")
+    if not employee or employee[4] != 1:
+        await update.message.reply_text("❌ Только для администраторов")
         return
     
     keyboard = [
-        [InlineKeyboardButton("👥 Все сотрудники", callback_data="admin_employees")],
-        [InlineKeyboardButton("📊 Общий табель", callback_data="admin_timesheet")],
-        [InlineKeyboardButton("📈 Отчет за месяц", callback_data="admin_monthly")],
-        [InlineKeyboardButton("📥 Экспорт в Excel", callback_data="admin_export")],
-        [InlineKeyboardButton("⚙️ Настройки", callback_data="admin_settings")]
+        [InlineKeyboardButton("👥 Все сотрудники", callback_data="admin_list")],
+        [InlineKeyboardButton("📊 Общий табель", callback_data="admin_all")]
     ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
     await update.message.reply_text(
-        "🔐 *Панель администратора*\nВыберите действие:",
-        reply_markup=reply_markup,
+        "🔐 *Панель администратора*", 
+        reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode='Markdown'
     )
 
-async def admin_employees(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def admin_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
     employees = get_all_employees()
     
-    if not employees:
-        await query.edit_message_text("❌ Нет зарегистрированных сотрудников")
-        return
+    msg = "👥 *Сотрудники:*\n\n"
+    for e in employees:
+        admin = "👑 " if e[4] == 1 else ""
+        msg += f"{admin}{e[1]} - {e[2]}\n"
     
-    message = "👥 *Список сотрудников*\n\n"
-    for emp in employees:
-        message += f"• {emp[1]} ({emp[2]})\n"
-        if emp[5] == 1:
-            message += "  👑 Администратор\n"
-        message += f"  ID: {emp[0]}\n\n"
-    
-    await query.edit_message_text(message, parse_mode='Markdown')
+    await query.edit_message_text(msg, parse_mode='Markdown')
 
-async def admin_timesheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def admin_all(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
     entries = get_all_timesheet()
     
-    if not entries:
-        await query.edit_message_text("❌ Нет записей в табеле")
-        return
+    msg = "📊 *Последние записи:*\n\n"
+    for e in entries:
+        msg += f"• {e[0]} ({e[1]}) - {e[2]}: {e[3]}"
+        if e[4]:
+            msg += f" {e[4]:.1f}ч"
+        msg += "\n"
     
-    message = "📊 *Общий табель*\n\n"
-    for entry in entries[-20:]:  # Последние 20 записей
-        entry_date = datetime.strptime(entry[2], '%Y-%m-%d').strftime('%d.%m.%Y')
-        message += f"• {entry[10]} ({entry[11]}) - {entry_date}: {entry[3]}\n"
-        if entry[6]:
-            message += f"  Часов: {entry[6]:.1f}\n"
-    
-    await query.edit_message_text(message, parse_mode='Markdown')
+    await query.edit_message_text(msg, parse_mode='Markdown')
 
-async def export_excel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    employee = get_employee(user_id)
-    
-    if not employee or employee[5] != 1:
-        await update.message.reply_text("❌ У вас нет прав администратора")
-        return
-    
-    entries = get_all_timesheet()
-    
-    if not entries:
-        await update.message.reply_text("❌ Нет данных для экспорта")
-        return
-    
-    # Создаем DataFrame
-    data = []
-    for entry in entries:
-        data.append({
-            'Дата': entry[2],
-            'Сотрудник': entry[10],
-            'Должность': entry[11],
-            'Статус': entry[3],
-            'Начало': entry[4],
-            'Конец': entry[5],
-            'Часов': entry[6],
-            'Примечание': entry[7]
-        })
-    
-    df = pd.DataFrame(data)
-    
-    # Сохраняем в Excel
-    filename = f"timesheet_{date.today().isoformat()}.xlsx"
-    df.to_excel(filename, index=False)
-    
-    # Отправляем файл
-    with open(filename, 'rb') as file:
-        await update.message.reply_document(
-            document=file,
-            filename=filename,
-            caption=f"📊 Экспорт табеля от {date.today().strftime('%d.%m.%Y')}"
-        )
-    
-    # Удаляем временный файл
-    os.remove(filename)
-
-# Обработка неизвестных команд
-async def unknown(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❌ Неизвестная команда. Используйте /help для списка команд.")
-
-# Отмена разговора
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❌ Действие отменено.")
+    await update.message.reply_text("❌ Отменено")
     return ConversationHandler.END
 
 def main():
@@ -496,10 +297,10 @@ def main():
     init_database()
     
     # Создание приложения
-    application = Application.builder().token(BOT_TOKEN).build()
+    app = Application.builder().token(BOT_TOKEN).build()
     
-    # Обработчик регистрации
-    register_conv = ConversationHandler(
+    # Регистрация
+    reg_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(register_start, pattern='^register$')],
         states={
             REGISTER_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_name)],
@@ -508,29 +309,20 @@ def main():
         fallbacks=[CommandHandler('cancel', cancel)]
     )
     
-    # Регистрация обработчиков команд
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("checkin", checkin))
-    application.add_handler(CommandHandler("checkout", checkout))
-    application.add_handler(CommandHandler("timesheet", view_timesheet))
-    application.add_handler(CommandHandler("stats", stats))
-    application.add_handler(CommandHandler("admin", admin_panel))
-    application.add_handler(CommandHandler("export", export_excel))
+    # Команды
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("checkin", checkin))
+    app.add_handler(CommandHandler("checkout", checkout))
+    app.add_handler(CommandHandler("timesheet", timesheet))
+    app.add_handler(CommandHandler("stats", stats))
+    app.add_handler(CommandHandler("admin", admin))
+    app.add_handler(reg_conv)
+    app.add_handler(CallbackQueryHandler(admin_list, pattern='^admin_list$'))
+    app.add_handler(CallbackQueryHandler(admin_all, pattern='^admin_all$'))
     
-    # Регистрация обработчиков CallbackQuery
-    application.add_handler(CallbackQueryHandler(admin_employees, pattern='^admin_employees$'))
-    application.add_handler(CallbackQueryHandler(admin_timesheet, pattern='^admin_timesheet$'))
-    
-    # Регистрация обработчика неизвестных команд
-    application.add_handler(MessageHandler(filters.COMMAND, unknown))
-    
-    # Регистрация ConversationHandler
-    application.add_handler(register_conv)
-    
-    # Запуск бота
-    print("Бот запущен...")
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    print("✅ Бот успешно запущен!")
+    app.run_polling()
 
 if name == 'main':
     main()
