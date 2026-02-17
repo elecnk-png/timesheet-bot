@@ -12,7 +12,7 @@ BOT_TOKEN = os.getenv('BOT_TOKEN')
 
 # Настройка логирования
 logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s', level=logging.INFO)
-logger = logging.getLogger(name)
+logger = logging.getLogger(_name_)
 
 # Состояния для регистрации
 REGISTER_NAME, REGISTER_POSITION = range(2)
