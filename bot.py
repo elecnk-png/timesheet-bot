@@ -611,7 +611,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode='Markdown'
             )
 
-# Новая функция для первого администратора
+# Функция для первого администратора
 async def become_first_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Стать первым администратором (без выбора должности и магазина)"""
     query = update.callback_query
@@ -637,6 +637,7 @@ async def become_first_admin(update: Update, context: ContextTypes.DEFAULT_TYPE)
         parse_mode='Markdown'
     )
 
+# Функция для регистрации
 async def register_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -906,6 +907,368 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode='Markdown'
     )
+
+# Функции для управления должностями
+async def positions_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Меню управления должностями"""
+    query = update.callback_query
+    await query.answer()
+    
+    keyboard = [
+        [InlineKeyboardButton("➕ Создать должность", callback_data="create_position")],
+        [InlineKeyboardButton("📋 Список должностей", callback_data="list_positions")],
+        [InlineKeyboardButton("🗑 Удалить должность", callback_data="delete_position_menu")],
+        [InlineKeyboardButton("◀️ Назад в админку", callback_data="back_to_admin")]
+    ]
+    
+    await query.edit_message_text(
+        "📋 *Управление должностями*\nВыберите действие:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
+    )
+
+async def create_position_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начать создание должности"""
+    query = update.callback_query
+    await query.answer()
+    
+    await query.edit_message_text(
+        "Введите название новой должности:"
+    )
+    return CREATE_POSITION_NAME
+
+async def create_position_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Сохранить новую должность"""
+    position_name = update.message.text.strip()
+    user_id = update.effective_user.id
+    
+    if add_position(position_name, user_id):
+        await update.message.reply_text(
+            f"✅ Должность '{position_name}' успешно создана!",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ В меню должностей", callback_data="admin_positions_menu")
+            ]])
+        )
+    else:
+        await update.message.reply_text(
+            f"❌ Должность '{position_name}' уже существует!",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Попробовать снова", callback_data="create_position")
+            ]])
+        )
+    return ConversationHandler.END
+
+async def list_positions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать список должностей"""
+    query = update.callback_query
+    await query.answer()
+    
+    positions = get_all_positions()
+    
+    if not positions:
+        await query.edit_message_text(
+            "📋 Список должностей пуст.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="admin_positions_menu")
+            ]])
+        )
+        return
+    
+    msg = "📋 *Список должностей:*\n\n"
+    for i, pos in enumerate(positions, 1):
+        msg += f"{i}. {pos}\n"
+    
+    await query.edit_message_text(
+        msg,
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("◀️ Назад", callback_data="admin_positions_menu")
+        ]]),
+        parse_mode='Markdown'
+    )
+
+async def delete_position_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Меню выбора должности для удаления"""
+    query = update.callback_query
+    await query.answer()
+    
+    positions = get_all_positions()
+    
+    if not positions:
+        await query.edit_message_text(
+            "📋 Список должностей пуст.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="admin_positions_menu")
+            ]])
+        )
+        return
+    
+    keyboard = []
+    for pos in positions:
+        keyboard.append([InlineKeyboardButton(f"🗑 {pos}", callback_data=f"delete_position_{pos}")])
+    
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="admin_positions_menu")])
+    
+    await query.edit_message_text(
+        "Выберите должность для удаления:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def delete_position_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Подтверждение удаления должности"""
+    query = update.callback_query
+    await query.answer()
+    
+    position = query.data.replace('delete_position_', '')
+    
+    employees = get_all_employees()
+    used_by = [e for e in employees if e[2] == position]
+    
+    if used_by:
+        msg = f"❌ Нельзя удалить должность '{position}', так как она используется:\n"
+        for e in used_by[:5]:
+            msg += f"  • {e[1]} ({e[3]})\n"
+        if len(used_by) > 5:
+            msg += f"  • и еще {len(used_by) - 5} сотрудников\n"
+        
+        await query.edit_message_text(
+            msg,
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="delete_position_menu")
+            ]])
+        )
+        return
+    
+    delete_position(position)
+    
+    await query.edit_message_text(
+        f"✅ Должность '{position}' удалена!",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("◀️ В меню должностей", callback_data="admin_positions_menu")
+        ]])
+    )
+
+# Функции для управления магазинами
+async def stores_management_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Меню управления магазинами"""
+    query = update.callback_query
+    await query.answer()
+    
+    keyboard = [
+        [InlineKeyboardButton("➕ Создать магазин", callback_data="create_store")],
+        [InlineKeyboardButton("📋 Список магазинов", callback_data="list_stores")],
+        [InlineKeyboardButton("🗑 Удалить магазин", callback_data="delete_store_from_list_menu")],
+        [InlineKeyboardButton("◀️ Назад в админку", callback_data="back_to_admin")]
+    ]
+    
+    await query.edit_message_text(
+        "🏪 *Управление магазинами*\nВыберите действие:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
+    )
+
+async def create_store_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начать создание магазина"""
+    query = update.callback_query
+    await query.answer()
+    
+    await query.edit_message_text(
+        "Введите название нового магазина:"
+    )
+    return CREATE_STORE_NAME
+
+async def create_store_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Сохранить название магазина и запросить адрес"""
+    store_name = update.message.text.strip()
+    context.user_data['new_store_name'] = store_name
+    
+    await update.message.reply_text(
+        f"Введите адрес магазина '{store_name}':\n"
+        "(или отправьте '-' если адрес не нужен)"
+    )
+    return CREATE_STORE_ADDRESS
+
+async def create_store_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Сохранить новый магазин"""
+    address = update.message.text.strip()
+    store_name = context.user_data.get('new_store_name')
+    user_id = update.effective_user.id
+    
+    if address == '-':
+        address = ''
+    
+    if add_store(store_name, address, user_id):
+        await update.message.reply_text(
+            f"✅ Магазин '{store_name}' успешно создан!",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ В меню магазинов", callback_data="admin_stores_menu")
+            ]])
+        )
+    else:
+        await update.message.reply_text(
+            f"❌ Магазин '{store_name}' уже существует!",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Попробовать снова", callback_data="create_store")
+            ]])
+        )
+    return ConversationHandler.END
+
+async def list_stores(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать список магазинов"""
+    query = update.callback_query
+    await query.answer()
+    
+    stores = get_all_stores()
+    
+    if not stores:
+        await query.edit_message_text(
+            "📋 Список магазинов пуст.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="admin_stores_menu")
+            ]])
+        )
+        return
+    
+    msg = "🏪 *Список магазинов:*\n\n"
+    for i, (store_name, store_address) in enumerate(stores, 1):
+        msg += f"{i}. *{store_name}*\n"
+        if store_address:
+            msg += f"   📍 {store_address}\n"
+        msg += "\n"
+    
+    await query.edit_message_text(
+        msg,
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("◀️ Назад", callback_data="admin_stores_menu")
+        ]]),
+        parse_mode='Markdown'
+    )
+
+async def delete_store_from_list_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Меню выбора магазина для удаления из списка"""
+    query = update.callback_query
+    await query.answer()
+    
+    stores = get_all_stores()
+    
+    if not stores:
+        await query.edit_message_text(
+            "📋 Список магазинов пуст.",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="admin_stores_menu")
+            ]])
+        )
+        return
+    
+    keyboard = []
+    for store_name, store_address in stores:
+        button_text = f"🗑 {store_name}"
+        if store_address:
+            button_text += f" ({store_address})"
+        keyboard.append([InlineKeyboardButton(button_text[:40], callback_data=f"delete_store_list_{store_name}")])
+    
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="admin_stores_menu")])
+    
+    await query.edit_message_text(
+        "Выберите магазин для удаления из списка:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def delete_store_from_list_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Подтверждение удаления магазина из списка"""
+    query = update.callback_query
+    await query.answer()
+    
+    store_name = query.data.replace('delete_store_list_', '')
+    
+    employees = get_employees_by_store(store_name)
+    
+    if employees:
+        msg = f"❌ Нельзя удалить магазин '{store_name}', так как в нем есть сотрудники:\n"
+        for e in employees[:5]:
+            msg += f"  • {e[1]} ({e[2]})\n"
+        if len(employees) > 5:
+            msg += f"  • и еще {len(employees) - 5} сотрудников\n"
+        msg += "\nСначала удалите или переведите сотрудников."
+        
+        await query.edit_message_text(
+            msg,
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="delete_store_from_list_menu")
+            ]])
+        )
+        return
+    
+    delete_store_from_list(store_name)
+    
+    await query.edit_message_text(
+        f"✅ Магазин '{store_name}' удален из списка!",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("◀️ В меню магазинов", callback_data="admin_stores_menu")
+        ]])
+    )
+
+# Функция для списка сотрудников
+async def employees_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать список всех сотрудников"""
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        user_id = query.from_user.id
+        message_func = query.edit_message_text
+        is_callback = True
+    else:
+        user_id = update.effective_user.id
+        message_func = update.message.reply_text
+        is_callback = False
+    
+    if not is_admin(user_id):
+        await message_func("❌ Только для администраторов")
+        return
+    
+    employees = get_all_employees()
+    
+    if not employees:
+        await message_func("❌ Нет зарегистрированных сотрудников")
+        return
+    
+    by_store = {}
+    for e in employees:
+        store = e[3] or "Без магазина"
+        if store not in by_store:
+            by_store[store] = []
+        by_store[store].append(e)
+    
+    msg = "👥 *Все сотрудники*\n\n"
+    for store, emps in by_store.items():
+        msg += f"🏪 *{store}*\n"
+        for e in emps:
+            admin = "👑 " if e[5] == 1 else ""
+            super_admin = "⭐ " if len(e) > 6 and e[6] == 1 else ""
+            msg += f"  {super_admin}{admin}{e[1]} - {e[2]}\n"
+        msg += "\n"
+    
+    if len(msg) > 4000:
+        if is_callback:
+            await query.edit_message_text(msg[:4000] + "\n\n*Сообщение продолжается...*", parse_mode='Markdown')
+            for i in range(4000, len(msg), 4000):
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=msg[i:i+4000],
+                    parse_mode='Markdown'
+                )
+        else:
+            for i in range(0, len(msg), 4000):
+                await update.message.reply_text(msg[i:i+4000], parse_mode='Markdown')
+    else:
+        await message_func(msg, parse_mode='Markdown')
+    
+    if is_callback:
+        keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")]]
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="Выберите действие:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
 
 # Функции для экспорта
 async def export_timesheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1295,16 +1658,327 @@ async def export_with_period(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await period_selection_menu(update, context)
     return ConversationHandler.END
 
-# Функция отмены
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❌ Отменено")
+# Функции для добавления администратора
+async def add_admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начать добавление администратора"""
+    query = update.callback_query
+    await query.answer()
+    
+    await query.edit_message_text(
+        "Введите Telegram ID пользователя, которого хотите сделать администратором:\n\n"
+        "ID можно узнать у пользователя - он должен отправить команду /id боту @userinfobot"
+    )
+    return ADD_ADMIN_ID
+
+async def add_admin_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка введенного ID"""
+    try:
+        new_admin_id = int(update.message.text)
+    except:
+        await update.message.reply_text("❌ Неверный формат ID. Введите число.")
+        return ADD_ADMIN_ID
+    
+    employee = get_employee(new_admin_id)
+    
+    if not employee:
+        await update.message.reply_text("❌ Пользователь с таким ID не зарегистрирован в боте")
+        return ConversationHandler.END
+    
+    context.user_data['new_admin_id'] = new_admin_id
+    
+    keyboard = [
+        [InlineKeyboardButton("✅ Да", callback_data="confirm_add_admin")],
+        [InlineKeyboardButton("❌ Нет", callback_data="cancel_add_admin")]
+    ]
+    
+    await update.message.reply_text(
+        f"Сделать администратором:\n"
+        f"👤 {employee[1]}\n"
+        f"📌 {employee[2]}\n"
+        f"🏪 {employee[3]}\n\n"
+        f"Подтвердите действие:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+    return ADD_ADMIN_CONFIRM
+
+async def confirm_add_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Подтверждение добавления администратора"""
+    query = update.callback_query
+    await query.answer()
+    
+    new_admin_id = context.user_data.get('new_admin_id')
+    if new_admin_id:
+        add_admin(new_admin_id)
+        employee = get_employee(new_admin_id)
+        await query.edit_message_text(
+            f"✅ Пользователь {employee[1]} теперь администратор!"
+        )
+    
     return ConversationHandler.END
+
+async def cancel_add_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отмена добавления администратора"""
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("❌ Добавление администратора отменено")
+    return ConversationHandler.END
+
+# Функции для запросов на удаление (заглушки, в реальном коде должны быть полные реализации)
+async def delete_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Функция удаления будет добавлена позже")
+
+async def delete_employee_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Функция удаления сотрудника будет добавлена позже")
+
+async def delete_store_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Функция удаления магазина будет добавлена позже")
+
+async def request_delete_employee(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Функция запроса удаления сотрудника будет добавлена позже")
+
+async def request_delete_store(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Функция запроса удаления магазина будет добавлена позже")
+
+async def approve_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Функция подтверждения запроса будет добавлена позже")
+
+async def reject_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Функция отклонения запроса будет добавлена позже")
+
+async def show_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        await query.edit_message_text("Функция просмотра запросов будет добавлена позже")
+    else:
+        await update.message.reply_text("Функция просмотра запросов будет добавлена позже")
+
+async def show_admin_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        await query.edit_message_text("Функция просмотра заявок в админы будет добавлена позже")
+    else:
+        await update.message.reply_text("Функция просмотра заявок в админы будет добавлена позже")
+
+async def approve_admin_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Функция одобрения заявки будет добавлена позже")
+
+async def reject_admin_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Функция отклонения заявки будет добавлена позже")
+
+async def assign_super_admin_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Функция управления супер-админами будет добавлена позже")
+
+async def list_super_admins(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Функция списка супер-админов будет добавлена позже")
+
+async def assign_super_admin_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Функция назначения супер-админа будет добавлена позже")
+
+async def select_super_admin_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Функция подтверждения супер-админа будет добавлена позже")
+
+async def confirm_assign_super_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Функция подтверждения супер-админа будет добавлена позже")
+
+# Функции для подтверждения смен (заглушки)
+async def confirm_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        await query.edit_message_text("Функция подтверждения смен будет добавлена позже")
+    else:
+        await update.message.reply_text("Функция подтверждения смен будет добавлена позже")
+
+async def confirm_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Функция подтверждения сегодняшних смен будет добавлена позже")
+
+async def confirm_period_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Функция выбора периода для подтверждения будет добавлена позже")
+
+async def confirm_all_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Функция подтверждения всех смен будет добавлена позже")
+
+async def confirm_by_store(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Функция подтверждения по магазинам будет добавлена позже")
+
+async def confirm_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Функция статистики подтверждений будет добавлена позже")
+
+async def back_to_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Возврат в меню подтверждения")
+
+async def confirm_period_shifts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Функция просмотра смен за период будет добавлена позже")
+
+async def confirm_store_shifts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Функция просмотра смен магазина будет добавлена позже")
+
+async def confirm_all_store(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Функция подтверждения всех смен магазина будет добавлена позже")
+
+async def confirm_shift_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Функция подтверждения смены будет добавлена позже")
+
+# Функции для экспорта по магазинам (заглушки)
+async def export_by_store(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Функция экспорта по магазинам будет добавлена позже")
+
+async def export_all_by_store(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Функция экспорта всех смен по магазинам будет добавлена позже")
+
+async def export_store_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Функция экспорта данных магазина будет добавлена позже")
+
+async def export_all_store_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Функция экспорта всех данных магазина будет добавлена позже")
+
+async def excel_by_store(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Функция Excel экспорта по магазинам будет добавлена позже")
+
+async def excel_all_by_store(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Функция Excel экспорта всех смен по магазинам будет добавлена позже")
+
+async def excel_store_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Функция Excel экспорта данных магазина будет добавлена позже")
+
+async def excel_all_store_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Функция Excel экспорта всех данных магазина будет добавлена позже")
+
+# Функция для статистики по магазинам
+async def store_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    stores = get_all_stores()
+    
+    if not stores:
+        await query.edit_message_text("❌ Нет магазинов с сотрудниками")
+        return
+    
+    end_date = date.today().isoformat()
+    start_date = (date.today() - timedelta(days=30)).isoformat()
+    
+    msg = "📈 *Статистика по магазинам за 30 дней*\n\n"
+    
+    for store_name, store_address in stores:
+        employees = get_employees_by_store(store_name)
+        entries = get_all_timesheet_by_period(start_date, end_date, store_name, show_unconfirmed=False)
+        
+        total_hours = sum(e[7] for e in entries if e[7])
+        total_days = len(set([e[3] for e in entries]))
+        
+        msg += f"🏪 *{store_name}*\n"
+        msg += f"👥 Сотрудников: {len(employees)}\n"
+        msg += f"⏱ Всего часов: {total_hours:.1f}\n"
+        msg += f"📅 Рабочих дней: {total_days}\n\n"
+    
+    await query.edit_message_text(msg, parse_mode='Markdown')
+
+# Функция для просмотра магазинов и сотрудников
+async def stores_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ Только для администраторов")
+        return
+    
+    stores = get_all_stores()
+    
+    if not stores:
+        await update.message.reply_text("❌ Нет магазинов с сотрудниками")
+        return
+    
+    msg = "🏪 *Магазины и сотрудники*\n\n"
+    
+    for store_name, store_address in stores:
+        employees = get_employees_by_store(store_name)
+        msg += f"*{store_name}*"
+        if store_address:
+            msg += f" - {store_address}"
+        msg += f" ({len(employees)} чел.)\n"
+        for e in employees:
+            admin = "👑 " if e[5] == 1 else ""
+            super_admin = "⭐ " if len(e) > 6 and e[6] == 1 else ""
+            msg += f"  {super_admin}{admin}{e[1]} - {e[2]}\n"
+        msg += "\n"
+    
+    await update.message.reply_text(msg, parse_mode='Markdown')
 
 # Функция для возврата в админку
 async def back_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await admin_panel(update, context)
+
+# Функция отмены
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("❌ Отменено")
+    return ConversationHandler.END
 
 def main():
     init_database()
@@ -1322,12 +1996,36 @@ def main():
         fallbacks=[CommandHandler('cancel', cancel)]
     )
     
-    # Conversation handler для выбора периода
+    add_admin_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(add_admin_start, pattern='^admin_add$')],
+        states={
+            ADD_ADMIN_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_admin_id)],
+            ADD_ADMIN_CONFIRM: [CallbackQueryHandler(confirm_add_admin, pattern='^confirm_add_admin$'),
+                               CallbackQueryHandler(cancel_add_admin, pattern='^cancel_add_admin$')],
+        },
+        fallbacks=[CommandHandler('cancel', cancel)]
+    )
+    
+    create_position_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(create_position_start, pattern='^create_position$')],
+        states={
+            CREATE_POSITION_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_position_save)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel)]
+    )
+    
+    create_store_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(create_store_start, pattern='^create_store$')],
+        states={
+            CREATE_STORE_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_store_name)],
+            CREATE_STORE_ADDRESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_store_save)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel)]
+    )
+    
     period_selection_conv = ConversationHandler(
         entry_points=[
             CallbackQueryHandler(period_selection_menu, pattern='^period_selection$'),
-            CallbackQueryHandler(process_period_selection, pattern='^period_'),
-            CallbackQueryHandler(export_with_period, pattern='^(export)_(confirmed|all)$')
         ],
         states={
             SELECT_PERIOD_START: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_custom_start)],
@@ -1345,18 +2043,51 @@ def main():
     app.add_handler(CommandHandler("timesheet", timesheet))
     app.add_handler(CommandHandler("stats", stats))
     app.add_handler(CommandHandler("admin", admin_panel))
+    app.add_handler(CommandHandler("employees", employees_list))
     app.add_handler(CommandHandler("export", export_timesheet))
     app.add_handler(CommandHandler("exportall", export_all_timesheet))
     app.add_handler(CommandHandler("exportdates", export_by_dates))
+    app.add_handler(CommandHandler("stores", stores_menu))
+    app.add_handler(CommandHandler("positions", positions_menu))
+    app.add_handler(CommandHandler("stores_list", stores_management_menu))
     
     # Callback handlers
     app.add_handler(CallbackQueryHandler(become_first_admin, pattern='^become_first_admin$'))
     app.add_handler(CallbackQueryHandler(back_to_admin, pattern='^back_to_admin$'))
     app.add_handler(CallbackQueryHandler(period_selection_menu, pattern='^period_selection$'))
     app.add_handler(CallbackQueryHandler(process_dates_export, pattern='^dates_'))
+    app.add_handler(CallbackQueryHandler(process_period_selection, pattern='^period_'))
+    
+    # Admin panel callbacks
+    app.add_handler(CallbackQueryHandler(employees_list, pattern='^admin_list$'))
+    app.add_handler(CallbackQueryHandler(export_by_store, pattern='^admin_export_menu$'))
+    app.add_handler(CallbackQueryHandler(export_all_by_store, pattern='^admin_export_all_menu$'))
+    app.add_handler(CallbackQueryHandler(period_selection_menu, pattern='^period_selection$'))
+    app.add_handler(CallbackQueryHandler(add_admin_start, pattern='^admin_add$'))
+    app.add_handler(CallbackQueryHandler(store_stats, pattern='^admin_store_stats$'))
+    app.add_handler(CallbackQueryHandler(confirm_menu, pattern='^admin_confirm$'))
+    app.add_handler(CallbackQueryHandler(delete_menu, pattern='^admin_delete_menu$'))
+    app.add_handler(CallbackQueryHandler(positions_menu, pattern='^admin_positions_menu$'))
+    app.add_handler(CallbackQueryHandler(stores_management_menu, pattern='^admin_stores_menu$'))
+    app.add_handler(CallbackQueryHandler(show_requests, pattern='^admin_requests$'))
+    app.add_handler(CallbackQueryHandler(show_admin_requests, pattern='^admin_admin_requests$'))
+    app.add_handler(CallbackQueryHandler(assign_super_admin_menu, pattern='^assign_super_admin_menu$'))
+    
+    # Position management callbacks
+    app.add_handler(CallbackQueryHandler(list_positions, pattern='^list_positions$'))
+    app.add_handler(CallbackQueryHandler(delete_position_menu, pattern='^delete_position_menu$'))
+    app.add_handler(CallbackQueryHandler(delete_position_confirm, pattern='^delete_position_'))
+    
+    # Store management callbacks
+    app.add_handler(CallbackQueryHandler(list_stores, pattern='^list_stores$'))
+    app.add_handler(CallbackQueryHandler(delete_store_from_list_menu, pattern='^delete_store_from_list_menu$'))
+    app.add_handler(CallbackQueryHandler(delete_store_from_list_confirm, pattern='^delete_store_list_'))
     
     # Conversation handlers
     app.add_handler(reg_conv)
+    app.add_handler(add_admin_conv)
+    app.add_handler(create_position_conv)
+    app.add_handler(create_store_conv)
     app.add_handler(period_selection_conv)
     
     print("✅ Бот успешно запущен!")
