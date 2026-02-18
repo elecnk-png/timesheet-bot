@@ -431,22 +431,39 @@ async def export_timesheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Нет записей за последние {days} дней")
         return
     
+    # Создаем CSV с правильной кодировкой UTF-8-SIG для Excel
     output = io.StringIO()
     writer = csv.writer(output)
     
+    # Заголовки на русском
     writer.writerow(['Сотрудник', 'Должность', 'Магазин', 'Дата', 'Статус', 
                      'Начало', 'Конец', 'Часов', 'Примечание'])
     
+    # Данные
     for e in entries:
+        # Преобразуем статус на русский
+        status_rus = 'Завершен' if e[4] == 'completed' else 'В работе' if e[4] == 'working' else e[4]
+        
         writer.writerow([
-            e[0], e[1], e[2], e[3], e[4], e[5], e[6], 
-            f"{e[7]:.1f}" if e[7] else "", e[8] or ""
+            e[0],  # Сотрудник
+            e[1],  # Должность
+            e[2],  # Магазин
+            e[3],  # Дата
+            status_rus,  # Статус на русском
+            e[5] or '',  # Начало
+            e[6] or '',  # Конец
+            f"{e[7]:.1f}".replace('.', ',') if e[7] else '',  # Часы (с запятой для Excel)
+            e[8] or ''  # Примечание
         ])
     
-    output.seek(0)
+    # Получаем данные и кодируем в UTF-8-SIG
+    csv_data = output.getvalue()
+    output.close()
+    
+    # Отправляем файл с правильной кодировкой
     filename = f"timesheet_{start_date}_to_{end_date}.csv"
     await update.message.reply_document(
-        document=output.getvalue().encode('utf-8'),
+        document=csv_data.encode('utf-8-sig'),  # Важно! utf-8-sig для Excel
         filename=filename,
         caption=f"📊 Табель за {days} дней (с {start_date} по {end_date})"
     )
@@ -497,24 +514,41 @@ async def export_store_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(f"❌ Нет записей за период")
         return
     
+    # Создаем CSV с правильной кодировкой UTF-8-SIG для Excel
     output = io.StringIO()
     writer = csv.writer(output)
+    
+    # Заголовки на русском
     writer.writerow(['Сотрудник', 'Должность', 'Магазин', 'Дата', 'Статус', 
                      'Начало', 'Конец', 'Часов', 'Примечание'])
     
+    # Данные
     for e in entries:
+        # Преобразуем статус на русский
+        status_rus = 'Завершен' if e[4] == 'completed' else 'В работе' if e[4] == 'working' else e[4]
+        
         writer.writerow([
-            e[0], e[1], e[2], e[3], e[4], e[5], e[6], 
-            f"{e[7]:.1f}" if e[7] else "", e[8] or ""
+            e[0],  # Сотрудник
+            e[1],  # Должность
+            e[2],  # Магазин
+            e[3],  # Дата
+            status_rus,  # Статус на русском
+            e[5] or '',  # Начало
+            e[6] or '',  # Конец
+            f"{e[7]:.1f}".replace('.', ',') if e[7] else '',  # Часы (с запятой для Excel)
+            e[8] or ''  # Примечание
         ])
     
-    output.seek(0)
+    # Получаем данные и кодируем в UTF-8-SIG
+    csv_data = output.getvalue()
+    output.close()
+    
+    # Отправляем файл с правильной кодировкой
     await query.message.reply_document(
-        document=output.getvalue().encode('utf-8'),
+        document=csv_data.encode('utf-8-sig'),  # Важно! utf-8-sig для Excel
         filename=filename,
         caption=f"{caption} за 30 дней"
     )
-    output.close()
     
     await admin_panel(update, context)
 
