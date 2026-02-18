@@ -218,9 +218,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[InlineKeyboardButton("📝 Зарегистрироваться", callback_data="register")]]
         await update.message.reply_text(
             "Добро пожаловать! Для работы необходимо зарегистрироваться.",
-            reply_markup=Inline
-
-KeyboardMarkup(keyboard)
+            reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
 # ИСПРАВЛЕНО: добавил скобки и параметры
