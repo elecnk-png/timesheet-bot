@@ -624,61 +624,6 @@ async def stores_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Нет магазинов с сотрудниками")
         return
     
-    msg = "🏪 *Магазины и сотрудники*\n\n"
-    
-    for store in stores:
-        employees = get_employees_by_store(store)
-        msg += f"*{store}* ({len(employees)} чел.)\n"
-        for e in employees:
-            admin = "👑 " if e[5] == 1 else ""
-            msg += f"  {admin}{e[1]} - {e[2]}\n"
-        msg += "\n"
-    
-    await update.message.reply_text(msg, parse_mode='Markdown')
-
-async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("❌ Отменено")
-    return ConversationHandler.END
-
-def main():
-    init_database()
-    
-    app = Application.builder().token(BOT_TOKEN).build()
-    
-    reg_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(register_start, pattern='^register$')],
-        states={
-            REGISTER_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_name)],
-            REGISTER_POSITION: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_position)],
-            REGISTER_STORE: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_store)],
-        },
-        fallbacks=[CommandHandler('cancel', cancel)]
-    )
-    
-    add_admin_conv = ConversationHandler(
-        entry_points=[CallbackQueryHandler(add_admin_start, pattern='^admin_add$')],
-        states={
-            ADD_ADMIN_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_admin_id)],
-            ADD_ADMIN_CONFIRM: [CallbackQueryHandler(confirm_add_admin, pattern='^confirm_add_admin$'),
-                               CallbackQueryHandler(cancel_add_admin, pattern='^cancel_add_admin$')],
-        },
-        fallbacks=[CommandHandler('cancel', cancel)]
-    )
-    
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("help", help_command))
-    app.add_handler(CommandHandler("checkin", checkin))
-    app.add_handler(CommandHandler("checkout", checkout))
-    app.add_handler(CommandHandler("timesheet", timesheet))
-    app.add_handler(CommandHandler("stats", stats))
-    app.add_handler(CommandHandler("admin", admin_panel))
-    app.add_handler(CommandHandler("employees", employees_list))
-    app.add_handler(CommandHandler("export", export_timesheet))
-    app.add_handler(CommandHandler("stores", stores_menu))
-    
-await query.edit_message_text("❌ Нет магазинов с сотрудниками")
-        return
-    
     end_date = date.today().isoformat()
     start_date = (date.today() - timedelta(days=30)).isoformat()
     
