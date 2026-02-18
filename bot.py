@@ -38,9 +38,9 @@ def init_database():
                        store TEXT,
                        reg_date TEXT, 
                        is_admin INTEGER DEFAULT 0,
-                       is_super_admin INTEGER DEFAULT 0)''')  # Новое поле для супер-админа
+                       is_super_admin INTEGER DEFAULT 0)''')
     
-    # Таблица записей табеля с добавленным полем confirmed
+    # Таблица записей табеля
     cursor.execute('''CREATE TABLE IF NOT EXISTS timesheet 
                       (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                        user_id INTEGER, 
@@ -61,7 +61,7 @@ def init_database():
                        target_type TEXT,
                        target_id TEXT,
                        target_name TEXT,
-                       status TEXT DEFAULT 'pending')''')  # pending, approved, rejected
+                       status TEXT DEFAULT 'pending')''')
     
     conn.commit()
     conn.close()
@@ -73,7 +73,7 @@ def add_employee(user_id, name, position, store):
     cursor.execute('SELECT COUNT(*) FROM employees')
     count = cursor.fetchone()[0]
     is_admin = 1 if count == 0 else 0
-    is_super_admin = 1 if count == 0 else 0  # Первый пользователь - супер-админ
+    is_super_admin = 1 if count == 0 else 0
     cursor.execute('INSERT OR REPLACE INTO employees VALUES (?, ?, ?, ?, ?, ?, ?)',
                   (user_id, name, position, store, datetime.now().isoformat(), is_admin, is_super_admin))
     conn.commit()
@@ -113,7 +113,6 @@ def get_all_stores():
     return [r[0] for r in result]
 
 def get_super_admin():
-    """Получить ID супер-администратора"""
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     cursor.execute('SELECT user_id FROM employees WHERE is_super_admin = 1')
@@ -122,7 +121,6 @@ def get_super_admin():
     return result[0] if result else None
 
 def is_super_admin(user_id):
-    """Проверить, является ли пользователь супер-администратором"""
     emp = get_employee(user_id)
     return emp and len(emp) > 6 and emp[6] == 1
 
@@ -139,7 +137,6 @@ def is_admin(user_id):
 
 # Функции для запросов на удаление
 def create_delete_request(requester_id, requester_name, target_type, target_id, target_name):
-    """Создать запрос на удаление"""
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     cursor.execute('''INSERT INTO delete_requests 
@@ -152,7 +149,6 @@ def create_delete_request(requester_id, requester_name, target_type, target_id, 
     return request_id
 
 def get_pending_requests():
-    """Получить все ожидающие запросы"""
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     cursor.execute('''SELECT * FROM delete_requests WHERE status = 'pending' ORDER BY request_date''')
@@ -161,7 +157,6 @@ def get_pending_requests():
     return result
 
 def get_request(request_id):
-    """Получить запрос по ID"""
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     cursor.execute('SELECT * FROM delete_requests WHERE id = ?', (request_id,))
@@ -170,7 +165,6 @@ def get_request(request_id):
     return result
 
 def update_request_status(request_id, status):
-    """Обновить статус запроса"""
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     cursor.execute('UPDATE delete_requests SET status = ? WHERE id = ?', (status, request_id))
@@ -179,7 +173,6 @@ def update_request_status(request_id, status):
 
 # Функции для удаления
 def delete_employee(user_id):
-    """Удалить сотрудника и все его записи"""
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     cursor.execute('DELETE FROM timesheet WHERE user_id = ?', (user_id,))
@@ -188,7 +181,6 @@ def delete_employee(user_id):
     conn.close()
 
 def delete_store(store_name):
-    """Удалить магазин и всех его сотрудников"""
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     cursor.execute('SELECT user_id FROM employees WHERE store = ?', (store_name,))
@@ -202,7 +194,6 @@ def delete_store(store_name):
     conn.close()
 
 def get_employee_stats(user_id):
-    """Получить статистику сотрудника"""
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     cursor.execute('SELECT COUNT(*) FROM timesheet WHERE user_id = ?', (user_id,))
@@ -211,7 +202,6 @@ def get_employee_stats(user_id):
     return entries_count
 
 def get_store_stats(store_name):
-    """Получить статистику магазина"""
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     cursor.execute('SELECT COUNT(*) FROM employees WHERE store = ?', (store_name,))
@@ -223,7 +213,7 @@ def get_store_stats(store_name):
     conn.close()
     return employees_count, entries_count
 
-# Функции для табеля (остаются без изменений)
+# Функции для табеля
 def add_checkin(user_id):
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
@@ -601,7 +591,6 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🗑 Запросить удаление", callback_data="admin_delete_menu")]
     ]
     
-    # Если пользователь супер-админ, добавляем кнопку для просмотра запросов
     if is_super_admin(user_id):
         keyboard.append([InlineKeyboardButton("📋 Запросы на удаление", callback_data="admin_requests")])
     
@@ -611,353 +600,32 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
 
-# Функции для запросов на удаление
-async def delete_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Меню запроса удаления"""
-    query = update.callback_query
-    await query.answer()
-    
-    keyboard = [
-        [InlineKeyboardButton("👤 Запросить удаление сотрудника", callback_data="delete_employee_menu")],
-        [InlineKeyboardButton("🏪 Запросить удаление магазина", callback_data="delete_store_menu")],
-        [InlineKeyboardButton("◀️ Назад в админку", callback_data="back_to_admin")]
-    ]
-    
-    await query.edit_message_text(
-        "🗑 *Запрос на удаление*\n"
-        "Выберите, что хотите удалить.\n"
-        "Запрос будет отправлен супер-администратору на подтверждение.",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode='Markdown'
-    )
-
-async def delete_employee_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показать список сотрудников для запроса удаления"""
-    query = update.callback_query
-    await query.answer()
-    
-    employees = get_all_employees()
-    
-    if not employees:
-        await query.edit_message_text(
-            "❌ Нет сотрудников для удаления",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("◀️ Назад", callback_data="admin_delete_menu")
-            ]])
-        )
-        return
-    
-    by_store = {}
-    for e in employees:
-        store = e[3] or "Без магазина"
-        if store not in by_store:
-            by_store[store] = []
-        by_store[store].append(e)
-    
-    msg = "👤 *Выберите сотрудника для удаления:*\n\n"
-    keyboard = []
-    
-    for store, emps in by_store.items():
-        for e in emps:
-            # Не даем запросить удаление самого себя и супер-админа
-            if e[0] != query.from_user.id and not (len(e) > 6 and e[6] == 1):
-                entries_count = get_employee_stats(e[0])
-                button_text = f"{e[1]} ({e[2]}) - {entries_count} записей"
-                keyboard.append([InlineKeyboardButton(
-                    button_text[:40], 
-                    callback_data=f"request_delete_employee_{e[0]}"
-                )])
-    
-    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="admin_delete_menu")])
-    
-    if len(keyboard) == 1:
-        await query.edit_message_text(
-            "❌ Нет доступных сотрудников для удаления",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
-    else:
-        await query.edit_message_text(
-            msg,
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
-        )
-
-async def request_delete_employee(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Запросить удаление сотрудника"""
-    query = update.callback_query
-    await query.answer()
-    
-    target_id = int(query.data.replace('request_delete_employee_', ''))
-    target = get_employee(target_id)
-    requester = get_employee(query.from_user.id)
-    
-    if not target or not requester:
-        await query.edit_message_text("❌ Ошибка: сотрудник не найден")
-        return
-    
-    entries_count = get_employee_stats(target_id)
-    
-    # Создаем запрос
-    request_id = create_delete_request(
-        requester_id=query.from_user.id,
-        requester_name=requester[1],
-        target_type='employee',
-        target_id=str(target_id),
-        target_name=target[1]
-    )
-    
-    # Отправляем уведомление супер-админу
-    super_admin_id = get_super_admin()
-    if super_admin_id:
-        try:
-            keyboard = [
-                [InlineKeyboardButton("✅ Подтвердить", callback_data=f"approve_request_{request_id}")],
-                [InlineKeyboardButton("❌ Отклонить", callback_data=f"reject_request_{request_id}")]
-            ]
-            
-            await context.bot.send_message(
-                chat_id=super_admin_id,
-                text=f"⭐ *Новый запрос на удаление*\n\n"
-                     f"От: {requester[1]} ({requester[2]}, {requester[3]})\n"
-                     f"Тип: Сотрудник\n"
-                     f"Цель: {target[1]} ({target[2]}, {target[3]})\n"
-                     f"Записей в табеле: {entries_count}\n\n"
-                     f"Подтвердите или отклоните запрос:",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode='Markdown'
-            )
-        except Exception as e:
-            logger.error(f"Не удалось отправить уведомление супер-админу: {e}")
-    
-    await query.edit_message_text(
-        f"✅ Запрос на удаление сотрудника {target[1]} отправлен супер-администратору на подтверждение.",
-        reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("◀️ В меню", callback_data="admin_delete_menu")
-        ]])
-    )
-
-async def delete_store_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показать список магазинов для запроса удаления"""
-    query = update.callback_query
-    await query.answer()
-    
-    stores = get_all_stores()
-    
-    if not stores:
-        await query.edit_message_text(
-            "❌ Нет магазинов для удаления",
-            reply_markup=InlineKeyboardMarkup([[
-                InlineKeyboardButton("◀️ Назад", callback_data="admin_delete_menu")
-            ]])
-        )
-        return
-    
-    msg = "🏪 *Выберите магазин для удаления:*\n\n"
-    keyboard = []
-    
-    for store in stores:
-        employees_count, entries_count = get_store_stats(store)
-        button_text = f"{store} - {employees_count} сотр., {entries_count} записей"
-        keyboard.append([InlineKeyboardButton(
-            button_text[:40], 
-            callback_data=f"request_delete_store_{store}"
-        )])
-    
-    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="admin_delete_menu")])
-    
-    await query.edit_message_text(
-        msg,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode='Markdown'
-    )
-
-async def request_delete_store(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Запросить удаление магазина"""
-    query = update.callback_query
-    await query.answer()
-    
-    store = query.data.replace('request_delete_store_', '')
-    requester = get_employee(query.from_user.id)
-    
-    employees_count, entries_count = get_store_stats(store)
-    
-    # Создаем запрос
-    request_id = create_delete_request(
-        requester_id=query.from_user.id,
-        requester_name=requester[1],
-        target_type='store',
-        target_id=store,
-        target_name=store
-    )
-    
-    # Отправляем уведомление супер-админу
-    super_admin_id = get_super_admin()
-    if super_admin_id:
-        try:
-            keyboard = [
-                [InlineKeyboardButton("✅ Подтвердить", callback_data=f"approve_request_{request_id}")],
-                [InlineKeyboardButton("❌ Отклонить", callback_data=f"reject_request_{request_id}")]
-            ]
-            
-            await context.bot.send_message(
-                chat_id=super_admin_id,
-                text=f"⭐ *Новый запрос на удаление*\n\n"
-                     f"От: {requester[1]} ({requester[2]}, {requester[3]})\n"
-                     f"Тип: Магазин\n"
-                     f"Цель: {store}\n"
-                     f"Сотрудников: {employees_count}\n"
-                     f"Записей в табеле: {entries_count}\n\n"
-                     f"Подтвердите или отклоните запрос:",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode='Markdown'
-            )
-        except Exception as e:
-            logger.error(f"Не удалось отправить уведомление супер-админу: {e}")
-    
-    await query.edit_message_text(
-        f"✅ Запрос на удаление магазина {store} отправлен супер-администратору на подтверждение.",
-        reply_markup=InlineKeyboardMarkup([[
-            InlineKeyboardButton("◀️ В меню", callback_data="admin_delete_menu")
-        ]])
-    )
-
-async def show_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показать все ожидающие запросы (для супер-админа)"""
-    user_id = update.effective_user.id
-    if not is_super_admin(user_id):
-        await update.message.reply_text("❌ Только для супер-администратора")
-        return
-    
-    requests = get_pending_requests()
-    
-    if not requests:
-        await update.message.reply_text("📋 Нет ожидающих запросов на удаление.")
-        return
-    
-    for req in requests:
-        request_id = req[0]
-        date_str = datetime.fromisoformat(req[1]).strftime('%d.%m.%Y %H:%M')
-        requester = req[3]
-        target_type = "👤 Сотрудник" if req[4] == 'employee' else "🏪 Магазин"
-        target_name = req[6]
-        
-        keyboard = [
-            [InlineKeyboardButton("✅ Подтвердить", callback_data=f"approve_request_{request_id}")],
-            [InlineKeyboardButton("❌ Отклонить", callback_data=f"reject_request_{request_id}")]
-        ]
-        
-        await update.message.reply_text(
-            f"📋 *Запрос #{request_id}*\n"
-            f"📅 {date_str}\n"
-            f"👤 От: {requester}\n"
-            f"📌 Тип: {target_type}\n"
-            f"🎯 Цель: {target_name}",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode='Markdown'
-        )
-
-async def approve_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Подтвердить запрос на удаление"""
-    query = update.callback_query
-    await query.answer()
-    
-    # Проверяем, что пользователь - супер-админ
-    if not is_super_admin(query.from_user.id):
-        await query.edit_message_text("❌ Только супер-администратор может подтверждать удаление")
-        return
-    
-    request_id = int(query.data.replace('approve_request_', ''))
-    request = get_request(request_id)
-    
-    if not request:
-        await query.edit_message_text("❌ Запрос не найден")
-        return
-    
-    if request[7] != 'pending':
-        await query.edit_message_text(f"❌ Запрос уже {request[7]}")
-        return
-    
-    # Выполняем удаление
-    try:
-        if request[4] == 'employee':  # Удаление сотрудника
-            target_id = int(request[5])
-            target = get_employee(target_id)
-            if target:
-                delete_employee(target_id)
-                result_text = f"✅ Сотрудник {target[1]} удален"
-            else:
-                result_text = f"❌ Сотрудник не найден"
-        
-        elif request[4] == 'store':  # Удаление магазина
-            store = request[5]
-            employees_count, entries_count = get_store_stats(store)
-            delete_store(store)
-            result_text = f"✅ Магазин {store} удален (сотрудников: {employees_count}, записей: {entries_count})"
-        
-        # Обновляем статус запроса
-        update_request_status(request_id, 'approved')
-        
-        # Уведомляем запросившего
-        try:
-            await context.bot.send_message(
-                chat_id=request[2],
-                text=f"✅ Ваш запрос на удаление {request[4]} {request[6]} одобрен супер-администратором."
-            )
-        except:
-            pass
-        
-        await query.edit_message_text(result_text)
-        
-    except Exception as e:
-        await query.edit_message_text(f"❌ Ошибка при удалении: {e}")
-
-async def reject_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Отклонить запрос на удаление"""
-    query = update.callback_query
-    await query.answer()
-    
-    # Проверяем, что пользователь - супер-админ
-    if not is_super_admin(query.from_user.id):
-        await query.edit_message_text("❌ Только супер-администратор может отклонять запросы")
-        return
-    
-    request_id = int(query.data.replace('reject_request_', ''))
-    request = get_request(request_id)
-    
-    if not request:
-        await query.edit_message_text("❌ Запрос не найден")
-        return
-    
-    if request[7] != 'pending':
-        await query.edit_message_text(f"❌ Запрос уже {request[7]}")
-        return
-    
-    # Обновляем статус запроса
-    update_request_status(request_id, 'rejected')
-    
-    # Уведомляем запросившего
-    try:
-        await context.bot.send_message(
-            chat_id=request[2],
-            text=f"❌ Ваш запрос на удаление {request[4]} {request[6]} отклонен супер-администратором."
-        )
-    except:
-        pass
-    
-    await query.edit_message_text(f"❌ Запрос #{request_id} отклонен")
-
+# ИСПРАВЛЕННАЯ ФУНКЦИЯ ДЛЯ СПИСКА СОТРУДНИКОВ
 async def employees_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
+    """Показать список всех сотрудников"""
+    # Проверяем, откуда вызвана функция (из callback или из команды)
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        user_id = query.from_user.id
+        message_func = query.edit_message_text
+        is_callback = True
+    else:
+        user_id = update.effective_user.id
+        message_func = update.message.reply_text
+        is_callback = False
+    
     if not is_admin(user_id):
-        await update.message.reply_text("❌ Только для администраторов")
+        await message_func("❌ Только для администраторов")
         return
     
     employees = get_all_employees()
     
     if not employees:
-        await update.message.reply_text("❌ Нет зарегистрированных сотрудников")
+        await message_func("❌ Нет зарегистрированных сотрудников")
         return
     
+    # Группируем по магазинам
     by_store = {}
     for e in employees:
         store = e[3] or "Без магазина"
@@ -974,11 +642,32 @@ async def employees_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg += f"  {super_admin}{admin}{e[1]} - {e[2]}\n"
         msg += "\n"
     
+    # Если сообщение слишком длинное, разбиваем на части
     if len(msg) > 4000:
-        for i in range(0, len(msg), 4000):
-            await update.message.reply_text(msg[i:i+4000], parse_mode='Markdown')
+        if is_callback:
+            # При callback нельзя отправить несколько сообщений, поэтому отправляем первое и уведомляем
+            await query.edit_message_text(msg[:4000] + "\n\n*Сообщение продолжается...*", parse_mode='Markdown')
+            # Остальное отправляем новым сообщением
+            for i in range(4000, len(msg), 4000):
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=msg[i:i+4000],
+                    parse_mode='Markdown'
+                )
+        else:
+            for i in range(0, len(msg), 4000):
+                await update.message.reply_text(msg[i:i+4000], parse_mode='Markdown')
     else:
-        await update.message.reply_text(msg, parse_mode='Markdown')
+        await message_func(msg, parse_mode='Markdown')
+    
+    # Если был callback, показываем кнопку "Назад"
+    if is_callback:
+        keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")]]
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="Выберите действие:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
 
 async def export_timesheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -1028,16 +717,333 @@ async def export_timesheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption=f"📊 Табель за {days} дней (с {start_date} по {end_date})"
     )
 
-# Функции для подтверждения смен (остаются без изменений)
+# Функции для удаления и запросов
+async def delete_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    keyboard = [
+        [InlineKeyboardButton("👤 Запросить удаление сотрудника", callback_data="delete_employee_menu")],
+        [InlineKeyboardButton("🏪 Запросить удаление магазина", callback_data="delete_store_menu")],
+        [InlineKeyboardButton("◀️ Назад в админку", callback_data="back_to_admin")]
+    ]
+    
+    await query.edit_message_text(
+        "🗑 *Запрос на удаление*\n"
+        "Выберите, что хотите удалить.\n"
+        "Запрос будет отправлен супер-администратору на подтверждение.",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
+    )
+
+async def delete_employee_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    employees = get_all_employees()
+    
+    if not employees:
+        await query.edit_message_text(
+            "❌ Нет сотрудников для удаления",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="admin_delete_menu")
+            ]])
+        )
+        return
+    
+    by_store = {}
+    for e in employees:
+        store = e[3] or "Без магазина"
+        if store not in by_store:
+            by_store[store] = []
+        by_store[store].append(e)
+    
+    msg = "👤 *Выберите сотрудника для удаления:*\n\n"
+    keyboard = []
+    
+    for store, emps in by_store.items():
+        for e in emps:
+            if e[0] != query.from_user.id and not (len(e) > 6 and e[6] == 1):
+                entries_count = get_employee_stats(e[0])
+                button_text = f"{e[1]} ({e[2]}) - {entries_count} записей"
+                keyboard.append([InlineKeyboardButton(
+                    button_text[:40], 
+                    callback_data=f"request_delete_employee_{e[0]}"
+                )])
+    
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="admin_delete_menu")])
+    
+    if len(keyboard) == 1:
+        await query.edit_message_text(
+            "❌ Нет доступных сотрудников для удаления",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    else:
+        await query.edit_message_text(
+            msg,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+
+async def request_delete_employee(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    target_id = int(query.data.replace('request_delete_employee_', ''))
+    target = get_employee(target_id)
+    requester = get_employee(query.from_user.id)
+    
+    if not target or not requester:
+        await query.edit_message_text("❌ Ошибка: сотрудник не найден")
+        return
+    
+    entries_count = get_employee_stats(target_id)
+    
+    request_id = create_delete_request(
+        requester_id=query.from_user.id,
+        requester_name=requester[1],
+        target_type='employee',
+        target_id=str(target_id),
+        target_name=target[1]
+    )
+    
+    super_admin_id = get_super_admin()
+    if super_admin_id:
+        try:
+            keyboard = [
+                [InlineKeyboardButton("✅ Подтвердить", callback_data=f"approve_request_{request_id}")],
+                [InlineKeyboardButton("❌ Отклонить", callback_data=f"reject_request_{request_id}")]
+            ]
+            
+            await context.bot.send_message(
+                chat_id=super_admin_id,
+                text=f"⭐ *Новый запрос на удаление*\n\n"
+                     f"От: {requester[1]} ({requester[2]}, {requester[3]})\n"
+                     f"Тип: Сотрудник\n"
+                     f"Цель: {target[1]} ({target[2]}, {target[3]})\n"
+                     f"Записей в табеле: {entries_count}\n\n"
+                     f"Подтвердите или отклоните запрос:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='Markdown'
+            )
+        except Exception as e:
+            logger.error(f"Не удалось отправить уведомление супер-админу: {e}")
+    
+    await query.edit_message_text(
+        f"✅ Запрос на удаление сотрудника {target[1]} отправлен супер-администратору на подтверждение.",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("◀️ В меню", callback_data="admin_delete_menu")
+        ]])
+    )
+
+async def delete_store_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    stores = get_all_stores()
+    
+    if not stores:
+        await query.edit_message_text(
+            "❌ Нет магазинов для удаления",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="admin_delete_menu")
+            ]])
+        )
+        return
+    
+    msg = "🏪 *Выберите магазин для удаления:*\n\n"
+    keyboard = []
+    
+    for store in stores:
+        employees_count, entries_count = get_store_stats(store)
+        button_text = f"{store} - {employees_count} сотр., {entries_count} записей"
+        keyboard.append([InlineKeyboardButton(
+            button_text[:40], 
+            callback_data=f"request_delete_store_{store}"
+        )])
+    
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="admin_delete_menu")])
+    
+    await query.edit_message_text(
+        msg,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
+    )
+
+async def request_delete_store(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    store = query.data.replace('request_delete_store_', '')
+    requester = get_employee(query.from_user.id)
+    
+    employees_count, entries_count = get_store_stats(store)
+    
+    request_id = create_delete_request(
+        requester_id=query.from_user.id,
+        requester_name=requester[1],
+        target_type='store',
+        target_id=store,
+        target_name=store
+    )
+    
+    super_admin_id = get_super_admin()
+    if super_admin_id:
+        try:
+            keyboard = [
+                [InlineKeyboardButton("✅ Подтвердить", callback_data=f"approve_request_{request_id}")],
+                [InlineKeyboardButton("❌ Отклонить", callback_data=f"reject_request_{request_id}")]
+            ]
+            
+            await context.bot.send_message(
+                chat_id=super_admin_id,
+                text=f"⭐ *Новый запрос на удаление*\n\n"
+                     f"От: {requester[1]} ({requester[2]}, {requester[3]})\n"
+                     f"Тип: Магазин\n"
+                     f"Цель: {store}\n"
+                     f"Сотрудников: {employees_count}\n"
+                     f"Записей в табеле: {entries_count}\n\n"
+                     f"Подтвердите или отклоните запрос:",
+                reply_markup=InlineKeyboardMarkup(keyboard),
+                parse_mode='Markdown'
+            )
+        except Exception as e:
+            logger.error(f"Не удалось отправить уведомление супер-админу: {e}")
+    
+    await query.edit_message_text(
+        f"✅ Запрос на удаление магазина {store} отправлен супер-администратору на подтверждение.",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("◀️ В меню", callback_data="admin_delete_menu")
+        ]])
+    )
+
+async def show_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_super_admin(user_id):
+        await update.message.reply_text("❌ Только для супер-администратора")
+        return
+    
+    requests = get_pending_requests()
+    
+    if not requests:
+        await update.message.reply_text("📋 Нет ожидающих запросов на удаление.")
+        return
+    
+    for req in requests:
+        request_id = req[0]
+        date_str = datetime.fromisoformat(req[1]).strftime('%d.%m.%Y %H:%M')
+        requester = req[3]
+        target_type = "👤 Сотрудник" if req[4] == 'employee' else "🏪 Магазин"
+        target_name = req[6]
+        
+        keyboard = [
+            [InlineKeyboardButton("✅ Подтвердить", callback_data=f"approve_request_{request_id}")],
+            [InlineKeyboardButton("❌ Отклонить", callback_data=f"reject_request_{request_id}")]
+        ]
+        
+        await update.message.reply_text(
+            f"📋 *Запрос #{request_id}*\n"
+            f"📅 {date_str}\n"
+            f"👤 От: {requester}\n"
+            f"📌 Тип: {target_type}\n"
+            f"🎯 Цель: {target_name}",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+
+async def approve_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    if not is_super_admin(query.from_user.id):
+        await query.edit_message_text("❌ Только супер-администратор может подтверждать удаление")
+        return
+    
+    request_id = int(query.data.replace('approve_request_', ''))
+    request = get_request(request_id)
+    
+    if not request:
+        await query.edit_message_text("❌ Запрос не найден")
+        return
+    
+    if request[7] != 'pending':
+        await query.edit_message_text(f"❌ Запрос уже {request[7]}")
+        return
+    
+    try:
+        if request[4] == 'employee':
+            target_id = int(request[5])
+            target = get_employee(target_id)
+            if target:
+                delete_employee(target_id)
+                result_text = f"✅ Сотрудник {target[1]} удален"
+            else:
+                result_text = f"❌ Сотрудник не найден"
+        
+        elif request[4] == 'store':
+            store = request[5]
+            employees_count, entries_count = get_store_stats(store)
+            delete_store(store)
+            result_text = f"✅ Магазин {store} удален (сотрудников: {employees_count}, записей: {entries_count})"
+        
+        update_request_status(request_id, 'approved')
+        
+        try:
+            await context.bot.send_message(
+                chat_id=request[2],
+                text=f"✅ Ваш запрос на удаление {request[4]} {request[6]} одобрен супер-администратором."
+            )
+        except:
+            pass
+        
+        await query.edit_message_text(result_text)
+        
+    except Exception as e:
+        await query.edit_message_text(f"❌ Ошибка при удалении: {e}")
+
+async def reject_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    if not is_super_admin(query.from_user.id):
+        await query.edit_message_text("❌ Только супер-администратор может отклонять запросы")
+        return
+    
+    request_id = int(query.data.replace('reject_request_', ''))
+    request = get_request(request_id)
+    
+    if not request:
+        await query.edit_message_text("❌ Запрос не найден")
+        return
+    
+    if request[7] != 'pending':
+        await query.edit_message_text(f"❌ Запрос уже {request[7]}")
+        return
+    
+    update_request_status(request_id, 'rejected')
+    
+    try:
+        await context.bot.send_message(
+            chat_id=request[2],
+            text=f"❌ Ваш запрос на удаление {request[4]} {request[6]} отклонен супер-администратором."
+        )
+    except:
+        pass
+    
+    await query.edit_message_text(f"❌ Запрос #{request_id} отклонен")
+
+# Функции для подтверждения смен
 async def confirm_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.callback_query:
         query = update.callback_query
         await query.answer()
         user_id = query.from_user.id
         message = query.message
+        is_callback = True
     else:
         user_id = update.effective_user.id
         message = update.message
+        is_callback = False
     
     if not is_admin(user_id):
         await message.reply_text("❌ Только для администраторов")
@@ -1066,7 +1072,7 @@ async def confirm_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stats_text += f"⏳ Ожидают: {stats[0] if stats else 0}\n"
     stats_text += f"📝 Всего смен: {stats[2] if stats else 0}"
     
-    if update.callback_query:
+    if is_callback:
         await query.edit_message_text(
             f"🔐 *Меню подтверждения смен*\n"
             f"🏪 Ваш магазин: {store}{stats_text}",
@@ -1543,13 +1549,13 @@ def main():
     app.add_handler(CommandHandler("export", export_timesheet))
     app.add_handler(CommandHandler("stores", stores_menu))
     app.add_handler(CommandHandler("confirm", confirm_menu))
-    app.add_handler(CommandHandler("requests", show_requests))  # Новая команда для супер-админа
+    app.add_handler(CommandHandler("requests", show_requests))
     
     # Admin panel callbacks
     app.add_handler(CallbackQueryHandler(back_to_admin, pattern='^back_to_admin$'))
     app.add_handler(CallbackQueryHandler(export_by_store, pattern='^admin_export_menu$'))
     app.add_handler(CallbackQueryHandler(store_stats, pattern='^admin_store_stats$'))
-    app.add_handler(CallbackQueryHandler(employees_list, pattern='^admin_list$'))
+    app.add_handler(CallbackQueryHandler(employees_list, pattern='^admin_list$'))  # ВАЖНО: обработчик для кнопки
     app.add_handler(CallbackQueryHandler(export_by_store, pattern='^admin_by_store$'))
     app.add_handler(CallbackQueryHandler(export_store_data, pattern='^export_store_'))
     app.add_handler(CallbackQueryHandler(confirm_menu, pattern='^admin_confirm$'))
