@@ -17,10 +17,10 @@ logging.basicConfig(format='%(asctime)s - %(name)s - %(levelname)s - %(message)s
 logger = logging.getLogger(__name__)
 
 # Состояния для регистрации
-REGISTER_NAME, REGISTER_POSITION, REGISTER_STORE = range(3, 6)
+REGISTER_NAME, REGISTER_POSITION, REGISTER_STORE = range(3)
 
 # Состояния для добавления администратора
-ADD_ADMIN_ID, ADD_ADMIN_CONFIRM = range(6, 8)
+ADD_ADMIN_ID, ADD_ADMIN_CONFIRM = range(3, 5)
 
 # Инициализация базы данных
 def init_database():
@@ -116,12 +116,12 @@ def remove_admin(user_id):
     conn.close()
 
 def is_admin(user_id):
-    emp = get_employee(user_id)
+    emp = get_empl
+
+oyee(user_id)
     return emp and emp[5] == 1
 
-# Функции для
-
-табеля
+# Функции для табеля
 def add_checkin(user_id):
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
@@ -220,12 +220,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[InlineKeyboardButton("📝 Зарегистрироваться", callback_data="register")]]
         await update.message.reply_text(
             "Добро пожаловать! Для работы необходимо зарегистрироваться.",
-            reply_markup=InlineKeyboardMarkup(keyboard)
+            reply_markup=Inline
+
+KeyboardMarkup(keyboard)
         )
 
-async def register_star
-
-t(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ИСПРАВЛЕНО: добавил скобки и параметры
+async def register_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     await query.edit_message_text("Введите ваше полное имя:")
@@ -331,13 +332,13 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Статистика по дням недели
     days_of_week = {0: 'Пн', 1: 'Вт', 2: 'Ср', 3: 'Чт', 4: 'Пт', 5: 'Сб', 6: 'Вс'}
-    day_stats = {d: 0 for d in range(7)}
+    day_st
+
+ats = {d: 0 for d in range(7)}
     
     for e in entries:
         if e[6]:
-            entry_date =
-
-datetime.strptime(e[2], '%Y-%m-%d')
+            entry_date = datetime.strptime(e[2], '%Y-%m-%d')
             day_stats[entry_date.weekday()] += 1
     
     msg = f"""
@@ -471,8 +472,7 @@ async def export_timesheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     writer = csv.writer(output)
     
     # Заголовки
-
-writer.writerow(['Сотрудник', 'Должность', 'Магазин', 'Дата', 'Статус', 
+    writer.writerow(['Сотрудник', 'Должность', 'Магазин', 'Дата', 'Статус', 
                      'Начало', 'Конец', 'Часов', 'Примечание'])
     
     # Данные
@@ -559,7 +559,7 @@ async def export_store_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     output.close()
     
     # Возвращаемся в меню
-    await admin_panel(query.message, context)
+    await admin_panel(update, context)
 
 async def add_admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -588,13 +588,13 @@ async def add_admin_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     keyboard = [
         [InlineKeyboardButton("✅ Да", callback_data="confirm_add_admin")],
-        [InlineKeyboardButton("❌ Нет", callback_data="cancel_add_admin")]
+        [InlineKeyboardButton("❌ Нет", callbac
+
+k_data="cancel_add_admin")]
     ]
     
     await update.message.reply_text(
-        f"Сделать
-
-администратором:\n"
+        f"Сделать администратором:\n"
         f"👤 {employee[1]}\n"
         f"📌 {employee[2]}\n"
         f"🏪 {employee[3]}\n\n"
@@ -656,7 +656,7 @@ async def store_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def back_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await admin_panel(query.message, context)
+    await admin_panel(update, context)
 
 async def stores_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -708,10 +708,10 @@ def main():
     add_admin_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(add_admin_start, pattern='^admin_add$')],
         states={
-            ADD_ADMIN_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_admin_id)],
-            ADD_ADMIN_CONFIRM: [CallbackQueryHandler(
+            ADD_ADMIN_ID: [MessageHandler(filters.TEXT & ~
 
-confirm_add_admin, pattern='^confirm_add_admin$'),
+filters.COMMAND, add_admin_id)],
+            ADD_ADMIN_CONFIRM: [CallbackQueryHandler(confirm_add_admin, pattern='^confirm_add_admin$'),
                                CallbackQueryHandler(cancel_add_admin, pattern='^cancel_add_admin$')],
         },
         fallbacks=[CommandHandler('cancel', cancel)]
@@ -730,7 +730,7 @@ confirm_add_admin, pattern='^confirm_add_admin$'),
     app.add_handler(CommandHandler("stores", stores_menu))
     
     # Обработчики callback
-    app.add_handler(CallbackQueryHandler(admin_panel, pattern='^back_to_admin$'))
+    app.add_handler(CallbackQueryHandler(back_to_admin, pattern='^back_to_admin$'))
     app.add_handler(CallbackQueryHandler(export_by_store, pattern='^admin_export_menu$'))
     app.add_handler(CallbackQueryHandler(store_stats, pattern='^admin_store_stats$'))
     app.add_handler(CallbackQueryHandler(employees_list, pattern='^admin_list$'))
