@@ -116,9 +116,7 @@ def remove_admin(user_id):
     conn.close()
 
 def is_admin(user_id):
-    emp = get_empl
-
-oyee(user_id)
+    emp = get_employee(user_id)
     return emp and emp[5] == 1
 
 # Функции для табеля
