@@ -676,7 +676,6 @@ def main():
     app.add_handler(CommandHandler("export", export_timesheet))
     app.add_handler(CommandHandler("stores", stores_menu))
     
-    > Nk:
 await query.edit_message_text("❌ Нет магазинов с сотрудниками")
         return
     
