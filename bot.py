@@ -913,6 +913,109 @@ async def back_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     await admin_panel(update, context)
 
+# Функции для списка сотрудников
+async def employees_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать список всех сотрудников"""
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        user_id = query.from_user.id
+        message_func = query.edit_message_text
+        is_callback = True
+    else:
+        user_id = update.effective_user.id
+        message_func = update.message.reply_text
+        is_callback = False
+    
+    if not is_admin(user_id):
+        await message_func("❌ Только для администраторов")
+        return
+    
+    employees = get_all_employees()
+    
+    if not employees:
+        await message_func("❌ Нет зарегистрированных сотрудников")
+        return
+    
+    by_store = {}
+    for e in employees:
+        store = e[3] or "Без магазина"
+        if store not in by_store:
+            by_store[store] = []
+        by_store[store].append(e)
+    
+    msg = "👥 *Все сотрудники*\n\n"
+    for store, emps in by_store.items():
+        msg += f"🏪 *{store}*\n"
+        for e in emps:
+            admin = "👑 " if e[5] == 1 else ""
+            super_admin = "⭐ " if len(e) > 6 and e[6] == 1 else ""
+            msg += f"  {super_admin}{admin}{e[1]} - {e[2]}\n"
+        msg += "\n"
+    
+    if len(msg) > 4000:
+        if is_callback:
+            await query.edit_message_text(msg[:4000] + "\n\n*Сообщение продолжается...*", parse_mode='Markdown')
+            for i in range(4000, len(msg), 4000):
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=msg[i:i+4000],
+                    parse_mode='Markdown'
+                )
+        else:
+            for i in range(0, len(msg), 4000):
+                await update.message.reply_text(msg[i:i+4000], parse_mode='Markdown')
+    else:
+        await message_func(msg, parse_mode='Markdown')
+    
+    if is_callback:
+        keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")]]
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="Выберите действие:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
+# Функция для отображения по магазинам
+async def admin_by_store(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать статистику по магазинам"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    if not is_admin(user_id):
+        await query.edit_message_text("❌ Только для администраторов")
+        return
+    
+    stores = get_all_stores()
+    
+    if not stores:
+        await query.edit_message_text(
+            "❌ Нет магазинов с сотрудниками",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")
+            ]])
+        )
+        return
+    
+    msg = "🏪 *Статистика по магазинам*\n\n"
+    
+    for store_name, store_address in stores:
+        employees = get_employees_by_store(store_name)
+        msg += f"*{store_name}*"
+        if store_address:
+            msg += f" - {store_address}"
+        msg += f"\n👥 Сотрудников: {len(employees)}\n"
+        msg += "\n"
+    
+    await query.edit_message_text(
+        msg,
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")
+        ]]),
+        parse_mode='Markdown'
+    )
+
 # Функции для экспорта по магазинам
 async def export_by_store(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Меню экспорта CSV (только подтвержденные) по магазинам"""
@@ -1975,20 +2078,22 @@ def main():
     app.add_handler(CommandHandler("exportall", export_all_timesheet))
     app.add_handler(CommandHandler("exportdates", export_by_dates))
     
-    # Callback handlers
+    # Callback handlers - ВСЕ КНОПКИ ИЗ АДМИНКИ
     app.add_handler(CallbackQueryHandler(become_first_admin, pattern='^become_first_admin$'))
     app.add_handler(CallbackQueryHandler(back_to_admin, pattern='^back_to_admin$'))
-    app.add_handler(CallbackQueryHandler(period_selection_menu, pattern='^period_selection$'))
-    app.add_handler(CallbackQueryHandler(process_dates_export, pattern='^dates_'))
-    
-    # Admin panel callbacks
+    app.add_handler(CallbackQueryHandler(employees_list, pattern='^admin_list$'))
+    app.add_handler(CallbackQueryHandler(admin_by_store, pattern='^admin_by_store$'))
     app.add_handler(CallbackQueryHandler(export_by_store, pattern='^admin_export_menu$'))
     app.add_handler(CallbackQueryHandler(export_all_by_store, pattern='^admin_export_all_menu$'))
-    app.add_handler(CallbackQueryHandler(export_store_data, pattern='^export_store_confirmed_'))
-    app.add_handler(CallbackQueryHandler(export_all_store_data, pattern='^export_store_all_'))
+    app.add_handler(CallbackQueryHandler(period_selection_menu, pattern='^period_selection$'))
     app.add_handler(CallbackQueryHandler(confirm_menu, pattern='^admin_confirm$'))
     app.add_handler(CallbackQueryHandler(assign_super_admin_menu, pattern='^assign_super_admin_menu$'))
     app.add_handler(CallbackQueryHandler(list_super_admins, pattern='^list_super_admins$'))
+    app.add_handler(CallbackQueryHandler(process_dates_export, pattern='^dates_'))
+    
+    # Export store data callbacks
+    app.add_handler(CallbackQueryHandler(export_store_data, pattern='^export_store_confirmed_'))
+    app.add_handler(CallbackQueryHandler(export_all_store_data, pattern='^export_store_all_'))
     
     # Confirmation menu callbacks
     app.add_handler(CallbackQueryHandler(confirm_today, pattern='^confirm_today$'))
