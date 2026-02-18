@@ -22,6 +22,9 @@ REGISTER_NAME, REGISTER_POSITION, REGISTER_STORE = range(3)
 # Состояния для добавления администратора
 ADD_ADMIN_ID, ADD_ADMIN_CONFIRM = range(3, 5)
 
+# Состояния для подтверждения
+CONFIRM_SELECT, CONFIRM_ACTION, CONFIRM_PERIOD = range(5, 8)
+
 # Инициализация базы данных
 def init_database():
     conn = sqlite3.connect('timesheet.db')
@@ -36,7 +39,7 @@ def init_database():
                        reg_date TEXT, 
                        is_admin INTEGER DEFAULT 0)''')
     
-    # Таблица записей табеля
+    # Таблица записей табеля с добавленным полем confirmed
     cursor.execute('''CREATE TABLE IF NOT EXISTS timesheet 
                       (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                        user_id INTEGER, 
@@ -45,7 +48,8 @@ def init_database():
                        check_in TEXT, 
                        check_out TEXT, 
                        hours REAL, 
-                       notes TEXT)''')
+                       notes TEXT,
+                       confirmed INTEGER DEFAULT 0)''')  # Новое поле: 0 - не подтверждено, 1 - подтверждено
     
     conn.commit()
     conn.close()
@@ -111,7 +115,8 @@ def add_checkin(user_id):
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     today = date.today().isoformat()
-    now = datetime.now().strftime('%H:%M')
+
+now = datetime.now().strftime('%H:%M')
     cursor.execute('INSERT OR REPLACE INTO timesheet (user_id, date, status, check_in) VALUES (?, ?, ?, ?)',
                   (user_id, today, 'working', now))
     conn.commit()
@@ -170,6 +175,112 @@ def get_all_timesheet_by_period(start_date, end_date, store=None):
                           ORDER BY e.store, e.full_name, t.date''', (start_date, end_date))
     
     result = cursor.fetchall()
+    conn.close()
+    return result
+
+# НОВЫЕ ФУНКЦИИ ДЛЯ ПОДТВЕРЖДЕНИЯ СМЕН
+def get_unconfirmed_shifts(store=None):
+    """Получить все неподтвержденные смены"""
+    conn = sqlite3.connect('timesheet.db')
+    cursor = conn.cursor()
+    
+    today = date.today().isoformat()
+    
+    if store:
+        cursor.execute('''SELECT t.id, e.full_name, e.position, e.store, t.date, t.check_in, t.check_out, t.hours, t.notes
+                          FROM timesheet t 
+                          JOIN employees e ON t.user_id = e.user_id
+                          WHERE t.date = ? AND t.confirmed = 0 AND e.store = ?
+                          ORDER BY e.full_name''', (today, store))
+    else:
+        cursor.execute('''SELECT t.id, e.full_name, e.position, e.store, t.date, t.check_in, t.check_out, t.hours, t.notes
+                          FROM timesheet t 
+                          JOIN employees e ON t.user_id = e.user_id
+                          WHERE t.date = ? AND t.confirmed = 0
+                          ORDER BY e.store, e.full_name''', (today,))
+    
+    result = cursor.fetchall()
+    conn.close()
+    return result
+
+def get_unconfirmed_shifts_by_period(days=7, store=None):
+    """Получить неподтвержденные смены за период"""
+    conn = sqlite3.connect('timesheet.db')
+    cursor = conn.cursor()
+    
+    start_date = (date.today() - timedelta(days=days)).isoformat()
+    end_date = date.today().isoformat()
+    
+    if store:
+        cursor.execute('''SELECT t.id, e.full_name, e.position, e.store, t.date, t.check_in, t.check_out, t.hours, t.notes
+                          FROM tim
+
+esheet t 
+                          JOIN employees e ON t.user_id = e.user_id
+                          WHERE t.date BETWEEN ? AND ? AND t.confirmed = 0 AND e.store = ?
+                          ORDER BY t.date DESC, e.full_name''', (start_date, end_date, store))
+    else:
+        cursor.execute('''SELECT t.id, e.full_name, e.position, e.store, t.date, t.check_in, t.check_out, t.hours, t.notes
+                          FROM timesheet t 
+                          JOIN employees e ON t.user_id = e.user_id
+                          WHERE t.date BETWEEN ? AND ? AND t.confirmed = 0
+                          ORDER BY t.date DESC, e.store, e.full_name''', (start_date, end_date))
+    
+    result = cursor.fetchall()
+    conn.close()
+    return result
+
+def confirm_shift(shift_id):
+    """Подтвердить конкретную смену"""
+    conn = sqlite3.connect('timesheet.db')
+    cursor = conn.cursor()
+    cursor.execute('UPDATE timesheet SET confirmed = 1 WHERE id = ?', (shift_id,))
+    conn.commit()
+    conn.close()
+
+def confirm_all_shifts(store=None, date_str=None):
+    """Подтвердить все смены за дату"""
+    conn = sqlite3.connect('timesheet.db')
+    cursor = conn.cursor()
+    
+    if not date_str:
+        date_str = date.today().isoformat()
+    
+    if store:
+        cursor.execute('''UPDATE timesheet 
+                          SET confirmed = 1 
+                          WHERE date = ? AND user_id IN 
+                          (SELECT user_id FROM employees WHERE store = ?)''', (date_str, store))
+    else:
+        cursor.execute('UPDATE timesheet SET confirmed = 1 WHERE date = ?', (date_str,))
+    
+    conn.commit()
+    conn.close()
+
+def get_shift_stats(store=None):
+    """Получить статистику по подтверждениям"""
+    conn = sqlite3.connect('timesheet.db')
+    cursor = conn.cursor()
+    
+    today = date.today().isoformat()
+    
+    if store:
+        cursor.execute('''SELECT 
+                          COUNT(CASE WHEN t.confirmed = 0 THEN 1 END) as unconfirmed,
+                          COUNT(CASE WHEN t.confirmed = 1 THEN 1 END) as confirmed,
+                          COUNT(*) as total
+                          FROM timesheet t 
+                          JOIN employees e ON t.user_id = e.user_id
+                          WHERE t.date = ? AND e.store = ?''', (today, store))
+    else:
+        cursor.execute('''SELECT 
+                          COUNT(CASE WHEN confirmed = 0 THEN 1 END) as unconfirmed,
+                          COUNT(CASE WHEN confirmed = 1 THEN 1 END) as confirmed,
+                          COUNT(*) as total
+                          FROM timesheet 
+                          WHERE date = ?''', (today,))
+    
+    result = cursor.fetchone()
     conn.close()
     return result
 
@@ -282,7 +393,8 @@ async def timesheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         date_obj = datetime.strptime(e[2], '%Y-%m-%d').strftime('%d.%m.%Y')
         status = "✅" if e[3] == 'completed' else "⏳"
         hours = f"({e[6]:.1f}ч)" if e[6] else ""
-        msg += f"{date_obj} {status} {e[4]}-{e[5] or '...'} {hours}\n"
+        confirmed = " ✓" if e[8] == 1 else " ⏳"
+        msg += f"{date_obj} {status}{confirmed} {e[4]}-{e[5] or '...'} {hours}\n"
         if e[6]:
             total_hours += e[6]
     
@@ -352,10 +464,12 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 /export [дней] - Выгрузить табель в CSV
 /addadmin - Добавить администратора
 /stores - Магазины и сотрудники
+/confirm - Подтверждение смен
 """
     
     await update.message.reply_text(help_text, parse_mode='Markdown')
 
+# Административные функции
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not is_admin(user_id):
@@ -367,7 +481,8 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📊 По магазинам", callback_data="admin_by_store")],
         [InlineKeyboardButton("📥 Экспорт за период", callback_data="admin_export_menu")],
         [InlineKeyboardButton("➕ Добавить админа", callback_data="admin_add")],
-        [InlineKeyboardButton("📈 Статистика по магазинам", callback_data="admin_store_stats")]
+        [InlineKeyboardButton("📈 Статистика по магазинам", callback_data="admin_store_stats")],
+        [InlineKeyboardButton("✅ Подтверждение смен", callback_data="admin_confirm")]  # Новая кнопка
     ]
     await update.message.reply_text(
         "🔐 *Панель администратора*\nВыберите действие:",
@@ -431,44 +546,308 @@ async def export_timesheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Нет записей за последние {days} дней")
         return
     
-    # Создаем CSV с правильной кодировкой UTF-8-SIG для Excel
     output = io.StringIO()
     writer = csv.writer(output)
     
-    # Заголовки на русском
     writer.writerow(['Сотрудник', 'Должность', 'Магазин', 'Дата', 'Статус', 
-                     'Начало', 'Конец', 'Часов', 'Примечание'])
+                     'Начало', 'Конец', 'Часов', 'Примечание', 'Подтверждено'])
     
-    # Данные
     for e in entries:
-        # Преобразуем статус на русский
         status_rus = 'Завершен' if e[4] == 'completed' else 'В работе' if e[4] == 'working' else e[4]
         
         writer.writerow([
-            e[0],  # Сотрудник
-            e[1],  # Должность
-            e[2],  # Магазин
-            e[3],  # Дата
-            status_rus,  # Статус на русском
-            e[5] or '',  # Начало
-            e[6] or '',  # Конец
-            f"{e[7]:.1f}".replace('.', ',') if e[7] else '',  # Часы (с запятой для Excel)
-            e[8] or ''  # Примечание
+            e[0], e[1], e[2], e[3], status_rus, e[5] or '', e[6] or '',
+            f"{e[7]:.1f}".replace('.', ',') if e[7] else '', e[8] or '',
+            'Да' if e[8] else 'Нет'
         ])
     
-    # Получаем данные и кодируем в UTF-8-SIG
     csv_data = output.getvalue()
     output.close()
     
-    # Отправляем файл с правильной кодировкой
     filename = f"timesheet_{start_date}_to_{end_date}.csv"
     await update.message.reply_document(
-        document=csv_data.encode('utf-8-sig'),  # Важно! utf-8-sig для Excel
+        document=csv_data.encode('utf-8-sig'),
         filename=filename,
         caption=f"📊 Табель за {days} дней (с {start_date} по {end_date})"
     )
+
+# НОВЫЕ ФУНКЦИИ ДЛЯ ПОДТВЕРЖДЕНИЯ СМЕН
+async def confirm_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Меню подтверждения смен"""
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ Только для администраторов")
+        return
     
-    output.close()
+    employee = get_employee(user_id)
+    store = employee[3]
+    
+    stats = get_shift_stats(store)
+    
+    keyboard = [
+        [InlineKeyboardButton("📋 Неподтвержденные сегодня", callback_data="confirm_today")],
+        [InlineKeyboardButton("📅 Неподтвержденные за период", callback_data="confirm_period")],
+        [InlineKeyboardButton("✅ Подтвердить все сегодня", callback_data="confirm_all_today")],
+        [InlineKeyboardButton("🏪 По магазинам", callback_data="confirm_by_store")],
+        [InlineKeyboardButton("📊 Статистика подтверждений", callback_data="confirm_stats")],
+        [InlineKeyboardButton("◀️ Назад в админку", callback_data="back_to_admin")]
+    ]
+    
+    stats_text = f"\n\n📊 *Статистика на сегодня:*\n"
+    stats_text += f"✅ Подтверждено: {stats[1] if stats else 0}\n"
+    stats_text += f"⏳ Ожидают: {stats[0] if stats else 0}\n"
+    stats_text += f"📝 Всего смен: {stats[2] if stats else 0}"
+    
+    await update.message.reply_text(
+        f"🔐 *Меню подтверждения смен*\n"
+        f"🏪 Ваш магазин: {store}{stats_text}",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
+    )
+
+async def confirm_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать неподтвержденные смены за сегодня"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    employee = get_employee(user_id)
+    store = employee[3]
+    
+    unconfirmed = get_unconfirmed_shifts(store)
+    
+    if not unconfirmed:
+        await query.edit_message_text(
+            "✅ Все смены за сегодня подтверждены!",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="back_to_confirm")
+            ]])
+        )
+        return
+    
+    msg = f"📋 *Неподтвержденные смены на сегодня*\n\n"
+    
+    # Создаем кнопки для каждой смены
+    keyboard = []
+    for shift in unconfirmed:
+        msg += f"👤 {shift[1]} ({shift[2]})\n"
+        msg += f"🕐 {shift[5] or '??'} - {shift[6] or '??'}"
+        if shift[7]:
+            msg += f" ({shift[7]:.1f}ч)"
+        if shift[8]:
+            msg += f"\n📝 {shift[8]}"
+        msg += "\n\n"
+        keyboard.append([InlineKeyboardButton(
+            f"✅ Подтвердить: {shift[1][:20]}", 
+            callback_data=f"confirm_shift_{shift[0]}"
+        )])
+    
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="back_to_confirm")])
+    
+    await query.edit_message_text(
+        msg,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
+    )
+
+async def confirm_shift_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Подтвердить конкретную смену"""
+    query = update.callback_query
+    await query.answer()
+    
+    shift_id = int(query.data.replace('confirm_shift_', ''))
+    confirm_shift(shift_id)
+    
+    await query.edit_message_text(
+        "✅ Смена подтверждена!",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("◀️ К списку", callback_data="confirm_today")
+        ]])
+    )
+
+async def confirm_all_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Подтвердить все смены за сегодня"""
+    query = update.callback_query
+    await query.answer()
+    
+    user_id = query.from_user.id
+    employee = get_employee(user_id)
+    store = employee[3]
+    
+    confirm_all_shifts(store)
+    
+    await query.edit_message_text(
+        "✅ Все смены за сегодня подтверждены!",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("◀️ Назад", callback_data="back_to_confirm")
+        ]])
+    )
+
+async def confirm_period_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Меню выбора периода для просмотра неподтвержденных"""
+    query = update.callback_query
+    await query.answer()
+    
+    keyboard = [
+        [InlineKeyboardButton("3 дня", callback_data="confirm_period_3")],
+        [InlineKeyboardButton("7 дней", callback_data="confirm_period_7")],
+        [InlineKeyboardButton("14 дней", callback_data="confirm_period_14")],
+        [InlineKeyboardButton("30 дней", callback_data="confirm_period_30")],
+        [InlineKeyboardButton("◀️ Назад", callback_data="back_to_confirm")]
+    ]
+    
+    await query.edit_message_text(
+        "📅 Выберите период для просмотра неподтвержденных смен:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def confirm_period_shifts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать неподтвержденные смены за период"""
+    query = update.callback_query
+    await query.answer()
+    
+    days = int(query.data.replace('confirm_period_', ''))
+    
+    user_id = query.from_user.id
+    employee = get_employee(user_id)
+    store = employee[3]
+    
+    unconfirmed = get_unconfirmed_shifts_by_period(days, store)
+    
+    if not unconfirmed:
+        await query.edit_message_text(
+            f"✅ Все смены за последние {days} дней подтверждены!",
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("◀️ Назад", callback_data="back_to_confirm")
+            ]])
+        )
+        return
+    
+    by_date = {}
+    for shift in unconfirmed:
+        if shift[4] not in by_date:
+            by_date[shift[4]] = []
+        by_date[shift[4]].append(shift)
+    
+    msg = f"📋 *Неподтвержденные смены за {days} дней*\n\n"
+    
+    for date_str, shifts in by_date.items():
+        msg += f"📅 *{date_str}*\n"
+        for shift in shifts:
+            msg += f"  👤 {shift[1]} ({shift[2]})\n"
+            msg += f"  🕐 {shift[5] or '??'} - {shift[6] or '??'}"
+            if shift[7]:
+                msg += f" ({shift[7]:.1f}ч)"
+            msg += "\n"
+        msg += "\n"
+    
+    await query.edit_message_text(
+        msg,
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("◀️ Назад", callback_data="back_to_confirm")
+        ]]),
+        parse_mode='Markdown'
+    )
+
+async def confirm_by_store(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать неподтвержденные смены по магазинам"""
+    query = update.callback_query
+    await query.answer()
+    
+    stores = get_all_stores()
+    
+    keyboard = []
+    for store in stores:
+        unconfirmed = get_unconfirmed_shifts(store)
+        if unconfirmed:
+            count = len(unconfirmed)
+            keyboard.append([InlineKeyboardButton(
+                f"🏪 {store} ({count})", 
+                callback_data=f"confirm_store_{store}"
+            )])
+    
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="back_to_confirm")])
+    
+    await query.edit_message_text(
+        "Выберите магазин для просмотра:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def confirm_store_shifts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать смены конкретного магазина"""
+    query = update.callback_query
+    await query.answer()
+    
+    store = query.data.replace('confirm_store_', '')
+    unconfirmed = get_unconfirmed_shifts(store)
+    
+    msg = f"🏪 *Магазин: {store}*\n"
+    msg += f"📋 Неподтвержденных смен: {len(unconfirmed)}\n\n"
+    
+    for shift in unconfirmed:
+        msg += f"👤 {shift[1]} ({shift[2]})\n"
+        msg += f"🕐 {shift[5] or '??'} - {shift[6] or '??'}"
+        if shift[7]:
+            msg += f" ({shift[7]:.1f}ч)"
+        msg += "\n\n"
+    
+    keyboard = [
+        [InlineKeyboardButton("✅ Подтвердить все", callback_data=f"confirm_all_store_{store}")],
+        [InlineKeyboardButton("◀️ Назад", callback_data="confirm_by_store")]
+    ]
+    
+    await query.edit_message_text(
+        msg,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
+    )
+
+async def confirm_all_store(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Подтвердить все смены в магазине за сегодня"""
+    query = update.callback_query
+    await query.answer()
+    
+    store = query.data.replace('confirm_all_store_', '')
+    confirm_all_shifts(store)
+    
+    await query.edit_message_text(
+        f"✅ Все смены в магазине {store} подтверждены!",
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("◀️ Назад", callback_data="confirm_by_store")
+        ]])
+    )
+
+async def confirm_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Статистика подтверждений"""
+    query = update.callback_query
+    await query.answer()
+    
+    stores = get_all_stores()
+    
+    msg = "📊 *Статистика подтверждений*\n\n"
+    
+    for store in stores:
+        stats = get_shift_stats(store)
+        if stats and stats[2] > 0:
+            percent = (stats[1] / stats[2] * 100) if stats[2] > 0 else 0
+            msg += f"🏪 *{store}*\n"
+            msg += f"✅ Подтверждено: {stats[1]}\n"
+            msg += f"⏳ Ожидают: {stats[0]}\n"
+            msg += f"📈 Процент: {percent:.1f}%\n\n"
+    
+    await query.edit_message_text(
+        msg,
+        reply_markup=InlineKeyboardMarkup([[
+            InlineKeyboardButton("◀️ Назад", callback_data="back_to_confirm")
+        ]]),
+        parse_mode='Markdown'
+    )
+
+async def back_to_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Вернуться в меню подтверждения"""
+    query = update.callback_query
+    await query.answer()
+    await confirm_menu(query.message, context)
 
 async def export_by_store(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -514,38 +893,24 @@ async def export_store_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(f"❌ Нет записей за период")
         return
     
-    # Создаем CSV с правильной кодировкой UTF-8-SIG для Excel
     output = io.StringIO()
     writer = csv.writer(output)
-    
-    # Заголовки на русском
     writer.writerow(['Сотрудник', 'Должность', 'Магазин', 'Дата', 'Статус', 
                      'Начало', 'Конец', 'Часов', 'Примечание'])
     
-    # Данные
     for e in entries:
-        # Преобразуем статус на русский
         status_rus = 'Завершен' if e[4] == 'completed' else 'В работе' if e[4] == 'working' else e[4]
         
         writer.writerow([
-            e[0],  # Сотрудник
-            e[1],  # Должность
-            e[2],  # Магазин
-            e[3],  # Дата
-            status_rus,  # Статус на русском
-            e[5] or '',  # Начало
-            e[6] or '',  # Конец
-            f"{e[7]:.1f}".replace('.', ',') if e[7] else '',  # Часы (с запятой для Excel)
-            e[8] or ''  # Примечание
+            e[0], e[1], e[2], e[3], status_rus, e[5] or '', e[6] or '',
+            f"{e[7]:.1f}".replace('.', ',') if e[7] else '', e[8] or ''
         ])
     
-    # Получаем данные и кодируем в UTF-8-SIG
     csv_data = output.getvalue()
     output.close()
     
-    # Отправляем файл с правильной кодировкой
     await query.message.reply_document(
-        document=csv_data.encode('utf-8-sig'),  # Важно! utf-8-sig для Excel
+        document=csv_data.encode('utf-8-sig'),
         filename=filename,
         caption=f"{caption} за 30 дней"
     )
@@ -644,43 +1009,7 @@ async def store_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def back_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await admin_panel(update, context)
-
-async def stores_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    if not is_admin(user_id):
-        await update.message.reply_text("❌ Только для администраторов")
-        return
-    
-    stores = get_all_stores()
-    
-    if not stores:
-        await update.message.reply_text("❌ Нет магазинов с сотрудниками")
-        return
-    
-    end_date = date.today().isoformat()
-    start_date = (date.today() - timedelta(days=30)).isoformat()
-    
-    msg = "📈 *Статистика по магазинам за 30 дней*\n\n"
-    
-    for store in stores:
-        employees = get_employees_by_store(store)
-        entries = get_all_timesheet_by_period(start_date, end_date, store)
-        
-        total_hours = sum(e[7] for e in entries if e[7])
-        total_days = len(set([e[3] for e in entries]))
-        
-        msg += f"🏪 *{store}*\n"
-        msg += f"👥 Сотрудников: {len(employees)}\n"
-        msg += f"⏱ Всего часов: {total_hours:.1f}\n"
-        msg += f"📅 Рабочих дней: {total_days}\n\n"
-    
-    await query.edit_message_text(msg, parse_mode='Markdown')
-
-async def back_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    await admin_panel(update, context)
+    await admin_panel(query.message, context)
 
 async def stores_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -715,6 +1044,7 @@ def main():
     
     app = Application.builder().token(BOT_TOKEN).build()
     
+    # Conversation Handlers
     reg_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(register_start, pattern='^register$')],
         states={
@@ -735,6 +1065,7 @@ def main():
         fallbacks=[CommandHandler('cancel', cancel)]
     )
     
+    # Basic commands
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("checkin", checkin))
@@ -745,14 +1076,30 @@ def main():
     app.add_handler(CommandHandler("employees", employees_list))
     app.add_handler(CommandHandler("export", export_timesheet))
     app.add_handler(CommandHandler("stores", stores_menu))
+    app.add_handler(CommandHandler("confirm", confirm_menu))  # Новая команда
     
+    # Admin panel callbacks
     app.add_handler(CallbackQueryHandler(back_to_admin, pattern='^back_to_admin$'))
     app.add_handler(CallbackQueryHandler(export_by_store, pattern='^admin_export_menu$'))
     app.add_handler(CallbackQueryHandler(store_stats, pattern='^admin_store_stats$'))
     app.add_handler(CallbackQueryHandler(employees_list, pattern='^admin_list$'))
     app.add_handler(CallbackQueryHandler(export_by_store, pattern='^admin_by_store$'))
     app.add_handler(CallbackQueryHandler(export_store_data, pattern='^export_store_'))
+    app.add_handler(CallbackQueryHandler(confirm_menu, pattern='^admin_confirm$'))  # Новая кнопка
     
+    # Confirmation menu callbacks
+    app.add_handler(CallbackQueryHandler(confirm_today, pattern='^confirm_today$'))
+    app.add_handler(CallbackQueryHandler(confirm_period_menu, pattern='^confirm_period$'))
+    app.add_handler(CallbackQueryHandler(confirm_all_today, pattern='^confirm_all_today$'))
+    app.add_handler(CallbackQueryHandler(confirm_by_store, pattern='^confirm_by_store$'))
+    app.add_handler(CallbackQueryHandler(confirm_stats, pattern='^confirm_stats$'))
+    app.add_handler(CallbackQueryHandler(back_to_confirm, pattern='^back_to_confirm$'))
+    app.add_handler(CallbackQueryHandler(confirm_period_shifts, pattern='^confirm_period_\\d+$'))
+    app.add_handler(CallbackQueryHandler(confirm_store_shifts, pattern='^confirm_store_'))
+    app.add_handler(CallbackQueryHandler(confirm_all_store, pattern='^confirm_all_store_'))
+    app.add_handler(CallbackQueryHandler(confirm_shift_action, pattern='^confirm_shift_\\d+$'))
+    
+    # Conversation handlers
     app.add_handler(reg_conv)
     app.add_handler(add_admin_conv)
     
