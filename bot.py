@@ -22,9 +22,6 @@ REGISTER_NAME, REGISTER_POSITION, REGISTER_STORE = range(3)
 # Состояния для добавления администратора
 ADD_ADMIN_ID, ADD_ADMIN_CONFIRM = range(3, 5)
 
-# Состояния для подтверждения
-CONFIRM_SELECT, CONFIRM_ACTION, CONFIRM_PERIOD = range(5, 8)
-
 # Инициализация базы данных
 def init_database():
     conn = sqlite3.connect('timesheet.db')
@@ -571,12 +568,25 @@ async def export_timesheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Функции для подтверждения смен
 async def confirm_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Меню подтверждения смен"""
-    user_id = update.effective_user.id
+    # Проверяем, откуда вызвана функция (из callback или из команды)
+    if update.callback_query:
+        query = update.callback_query
+        await query.answer()
+        user_id = query.from_user.id
+        message = query.message
+    else:
+        user_id = update.effective_user.id
+        message = update.message
+    
     if not is_admin(user_id):
-        await update.message.reply_text("❌ Только для администраторов")
+        await message.reply_text("❌ Только для администраторов")
         return
     
     employee = get_employee(user_id)
+    if not employee:
+        await message.reply_text("❌ Сотрудник не найден")
+        return
+        
     store = employee[3]
     
     stats = get_shift_stats(store)
@@ -595,12 +605,20 @@ async def confirm_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stats_text += f"⏳ Ожидают: {stats[0] if stats else 0}\n"
     stats_text += f"📝 Всего смен: {stats[2] if stats else 0}"
     
-    await update.message.reply_text(
-        f"🔐 *Меню подтверждения смен*\n"
-        f"🏪 Ваш магазин: {store}{stats_text}",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode='Markdown'
-    )
+    if update.callback_query:
+        await query.edit_message_text(
+            f"🔐 *Меню подтверждения смен*\n"
+            f"🏪 Ваш магазин: {store}{stats_text}",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+    else:
+        await message.reply_text(
+            f"🔐 *Меню подтверждения смен*\n"
+            f"🏪 Ваш магазин: {store}{stats_text}",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
 
 async def confirm_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показать неподтвержденные смены за сегодня"""
@@ -843,7 +861,8 @@ async def back_to_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Вернуться в меню подтверждения"""
     query = update.callback_query
     await query.answer()
-    await confirm_menu(query.message, context)
+    # Создаем контекст для вызова confirm_menu
+    await confirm_menu(update, context)
 
 async def export_by_store(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -911,6 +930,7 @@ async def export_store_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption=f"{caption} за 30 дней"
     )
     
+    # Возвращаемся в админку
     await admin_panel(update, context)
 
 async def add_admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1081,7 +1101,7 @@ def main():
     app.add_handler(CallbackQueryHandler(employees_list, pattern='^admin_list$'))
     app.add_handler(CallbackQueryHandler(export_by_store, pattern='^admin_by_store$'))
     app.add_handler(CallbackQueryHandler(export_store_data, pattern='^export_store_'))
-    app.add_handler(CallbackQueryHandler(confirm_menu, pattern='^admin_confirm$'))
+    app.add_handler(CallbackQueryHandler(confirm_menu, pattern='^admin_confirm$'))  # ВАЖНО: обработчик для кнопки в админке
     
     # Confirmation menu callbacks
     app.add_handler(CallbackQueryHandler(confirm_today, pattern='^confirm_today$'))
