@@ -123,14 +123,16 @@ now = datetime.now().strftime('%H:%M')
     conn.close()
     return now
 
-def add_checkout(user_id):
+def add_checkin(user_id):
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     today = date.today().isoformat()
     now = datetime.now().strftime('%H:%M')
-    
-    cursor.execute('SELECT * FROM timesheet WHERE user_id = ? AND date = ?', (user_id, today))
-    entry = cursor.fetchone()
+    cursor.execute('INSERT OR REPLACE INTO timesheet (user_id, date, status, check_in) VALUES (?, ?, ?, ?)',
+                  (user_id, today, 'working', now))
+    conn.commit()
+    conn.close()
+    return now
     
     if entry:
         check_in = entry[4]
