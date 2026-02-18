@@ -49,7 +49,7 @@ def init_database():
                        check_out TEXT, 
                        hours REAL, 
                        notes TEXT,
-                       confirmed INTEGER DEFAULT 0)''')  # Новое поле: 0 - не подтверждено, 1 - подтверждено
+                       confirmed INTEGER DEFAULT 0)''')
     
     conn.commit()
     conn.close()
@@ -115,24 +115,21 @@ def add_checkin(user_id):
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     today = date.today().isoformat()
-
-now = datetime.now().strftime('%H:%M')
-    cursor.execute('INSERT OR REPLACE INTO timesheet (user_id, date, status, check_in) VALUES (?, ?, ?, ?)',
-                  (user_id, today, 'working', now))
-    conn.commit()
-    conn.close()
-    return now
-
-def add_checkin(user_id):
-    conn = sqlite3.connect('timesheet.db')
-    cursor = conn.cursor()
-    today = date.today().isoformat()
     now = datetime.now().strftime('%H:%M')
     cursor.execute('INSERT OR REPLACE INTO timesheet (user_id, date, status, check_in) VALUES (?, ?, ?, ?)',
                   (user_id, today, 'working', now))
     conn.commit()
     conn.close()
     return now
+
+def add_checkout(user_id):
+    conn = sqlite3.connect('timesheet.db')
+    cursor = conn.cursor()
+    today = date.today().isoformat()
+    now = datetime.now().strftime('%H:%M')
+    
+    cursor.execute('SELECT * FROM timesheet WHERE user_id = ? AND date = ?', (user_id, today))
+    entry = cursor.fetchone()
     
     if entry:
         check_in = entry[4]
@@ -180,7 +177,7 @@ def get_all_timesheet_by_period(start_date, end_date, store=None):
     conn.close()
     return result
 
-# НОВЫЕ ФУНКЦИИ ДЛЯ ПОДТВЕРЖДЕНИЯ СМЕН
+# Функции для подтверждения смен
 def get_unconfirmed_shifts(store=None):
     """Получить все неподтвержденные смены"""
     conn = sqlite3.connect('timesheet.db')
@@ -215,9 +212,7 @@ def get_unconfirmed_shifts_by_period(days=7, store=None):
     
     if store:
         cursor.execute('''SELECT t.id, e.full_name, e.position, e.store, t.date, t.check_in, t.check_out, t.hours, t.notes
-                          FROM tim
-
-esheet t 
+                          FROM timesheet t 
                           JOIN employees e ON t.user_id = e.user_id
                           WHERE t.date BETWEEN ? AND ? AND t.confirmed = 0 AND e.store = ?
                           ORDER BY t.date DESC, e.full_name''', (start_date, end_date, store))
@@ -395,7 +390,7 @@ async def timesheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         date_obj = datetime.strptime(e[2], '%Y-%m-%d').strftime('%d.%m.%Y')
         status = "✅" if e[3] == 'completed' else "⏳"
         hours = f"({e[6]:.1f}ч)" if e[6] else ""
-        confirmed = " ✓" if e[8] == 1 else " ⏳"
+        confirmed = " ✓" if len(e) > 8 and e[8] == 1 else " ⏳"
         msg += f"{date_obj} {status}{confirmed} {e[4]}-{e[5] or '...'} {hours}\n"
         if e[6]:
             total_hours += e[6]
@@ -484,7 +479,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📥 Экспорт за период", callback_data="admin_export_menu")],
         [InlineKeyboardButton("➕ Добавить админа", callback_data="admin_add")],
         [InlineKeyboardButton("📈 Статистика по магазинам", callback_data="admin_store_stats")],
-        [InlineKeyboardButton("✅ Подтверждение смен", callback_data="admin_confirm")]  # Новая кнопка
+        [InlineKeyboardButton("✅ Подтверждение смен", callback_data="admin_confirm")]
     ]
     await update.message.reply_text(
         "🔐 *Панель администратора*\nВыберите действие:",
@@ -560,7 +555,7 @@ async def export_timesheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         writer.writerow([
             e[0], e[1], e[2], e[3], status_rus, e[5] or '', e[6] or '',
             f"{e[7]:.1f}".replace('.', ',') if e[7] else '', e[8] or '',
-            'Да' if e[8] else 'Нет'
+            'Да' if len(e) > 8 and e[8] else 'Нет'
         ])
     
     csv_data = output.getvalue()
@@ -573,7 +568,7 @@ async def export_timesheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption=f"📊 Табель за {days} дней (с {start_date} по {end_date})"
     )
 
-# НОВЫЕ ФУНКЦИИ ДЛЯ ПОДТВЕРЖДЕНИЯ СМЕН
+# Функции для подтверждения смен
 async def confirm_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Меню подтверждения смен"""
     user_id = update.effective_user.id
@@ -629,7 +624,6 @@ async def confirm_today(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     msg = f"📋 *Неподтвержденные смены на сегодня*\n\n"
     
-    # Создаем кнопки для каждой смены
     keyboard = []
     for shift in unconfirmed:
         msg += f"👤 {shift[1]} ({shift[2]})\n"
@@ -1011,7 +1005,7 @@ async def store_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def back_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    await admin_panel(query.message, context)
+    await admin_panel(update, context)
 
 async def stores_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -1078,7 +1072,7 @@ def main():
     app.add_handler(CommandHandler("employees", employees_list))
     app.add_handler(CommandHandler("export", export_timesheet))
     app.add_handler(CommandHandler("stores", stores_menu))
-    app.add_handler(CommandHandler("confirm", confirm_menu))  # Новая команда
+    app.add_handler(CommandHandler("confirm", confirm_menu))
     
     # Admin panel callbacks
     app.add_handler(CallbackQueryHandler(back_to_admin, pattern='^back_to_admin$'))
@@ -1087,7 +1081,7 @@ def main():
     app.add_handler(CallbackQueryHandler(employees_list, pattern='^admin_list$'))
     app.add_handler(CallbackQueryHandler(export_by_store, pattern='^admin_by_store$'))
     app.add_handler(CallbackQueryHandler(export_store_data, pattern='^export_store_'))
-    app.add_handler(CallbackQueryHandler(confirm_menu, pattern='^admin_confirm$'))  # Новая кнопка
+    app.add_handler(CallbackQueryHandler(confirm_menu, pattern='^admin_confirm$'))
     
     # Confirmation menu callbacks
     app.add_handler(CallbackQueryHandler(confirm_today, pattern='^confirm_today$'))
