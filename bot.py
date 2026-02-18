@@ -27,7 +27,7 @@ def init_database():
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     
-    # Таблица сотрудников (добавлено поле store)
+    # Таблица сотрудников
     cursor.execute('''CREATE TABLE IF NOT EXISTS employees 
                       (user_id INTEGER PRIMARY KEY, 
                        full_name TEXT, 
@@ -46,12 +46,6 @@ def init_database():
                        check_out TEXT, 
                        hours REAL, 
                        notes TEXT)''')
-    
-    # Таблица магазинов
-    cursor.execute('''CREATE TABLE IF NOT EXISTS stores 
-                      (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                       name TEXT UNIQUE,
-                       address TEXT)''')
     
     conn.commit()
     conn.close()
@@ -108,13 +102,6 @@ def add_admin(user_id):
     conn.commit()
     conn.close()
 
-def remove_admin(user_id):
-    conn = sqlite3.connect('timesheet.db')
-    cursor = conn.cursor()
-    cursor.execute('UPDATE employees SET is_admin = 0 WHERE user_id = ?', (user_id,))
-    conn.commit()
-    conn.close()
-
 def is_admin(user_id):
     emp = get_employee(user_id)
     return emp and emp[5] == 1
@@ -161,15 +148,6 @@ def get_timesheet(user_id, days=7):
     start_date = (date.today() - timedelta(days=days)).isoformat()
     cursor.execute('''SELECT * FROM timesheet WHERE user_id = ? AND date >= ? 
                       ORDER BY date DESC''', (user_id, start_date))
-    result = cursor.fetchall()
-    conn.close()
-    return result
-
-def get_timesheet_by_period(user_id, start_date, end_date):
-    conn = sqlite3.connect('timesheet.db')
-    cursor = conn.cursor()
-    cursor.execute('''SELECT * FROM timesheet WHERE user_id = ? AND date BETWEEN ? AND ?
-                      ORDER BY date''', (user_id, start_date, end_date))
     result = cursor.fetchall()
     conn.close()
     return result
@@ -221,7 +199,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
 
-# ИСПРАВЛЕНО: добавил скобки и параметры
 async def register_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -284,7 +261,6 @@ async def timesheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Сначала зарегистрируйтесь")
         return
     
-    # Проверяем, указан ли период
     if context.args:
         try:
             days = int(context.args[0])
@@ -326,11 +302,8 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     days_worked = len([e for e in entries if e[3] == 'completed'])
     avg_hours = total_hours / days_worked if days_worked > 0 else 0
     
-    # Статистика по дням недели
     days_of_week = {0: 'Пн', 1: 'Вт', 2: 'Ср', 3: 'Чт', 4: 'Пт', 5: 'Сб', 6: 'Вс'}
-    day_st
-
-ats = {d: 0 for d in range(7)}
+    day_stats = {d: 0 for d in range(7)}
     
     for e in entries:
         if e[6]:
@@ -383,7 +356,6 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(help_text, parse_mode='Markdown')
 
-# Административные функции
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if not is_admin(user_id):
@@ -415,7 +387,6 @@ async def employees_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Нет зарегистрированных сотрудников")
         return
     
-    # Группируем по магазинам
     by_store = {}
     for e in employees:
         store = e[3] or "Без магазина"
@@ -431,7 +402,6 @@ async def employees_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
             msg += f"  {admin}{e[1]} - {e[2]}\n"
         msg += "\n"
     
-    # Разбиваем на части, если сообщение слишком длинное
     if len(msg) > 4000:
         for i in range(0, len(msg), 4000):
             await update.message.reply_text(msg[i:i+4000], parse_mode='Markdown')
@@ -444,7 +414,6 @@ async def export_timesheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Только для администраторов")
         return
     
-    # Определяем период
     if context.args:
         try:
             days = int(context.args[0])
@@ -456,29 +425,24 @@ async def export_timesheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     end_date = date.today().isoformat()
     start_date = (date.today() - timedelta(days=days)).isoformat()
     
-    # Получаем данные
     entries = get_all_timesheet_by_period(start_date, end_date)
     
     if not entries:
         await update.message.reply_text(f"❌ Нет записей за последние {days} дней")
         return
     
-    # Создаем CSV в памяти
     output = io.StringIO()
     writer = csv.writer(output)
     
-    # Заголовки
     writer.writerow(['Сотрудник', 'Должность', 'Магазин', 'Дата', 'Статус', 
                      'Начало', 'Конец', 'Часов', 'Примечание'])
     
-    # Данные
     for e in entries:
         writer.writerow([
             e[0], e[1], e[2], e[3], e[4], e[5], e[6], 
             f"{e[7]:.1f}" if e[7] else "", e[8] or ""
         ])
     
-    # Отправляем файл
     output.seek(0)
     filename = f"timesheet_{start_date}_to_{end_date}.csv"
     await update.message.reply_document(
@@ -517,7 +481,6 @@ async def export_store_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     store = query.data.replace('export_store_', '')
     
-    # Период - последние 30 дней
     end_date = date.today().isoformat()
     start_date = (date.today() - timedelta(days=30)).isoformat()
     
@@ -534,7 +497,6 @@ async def export_store_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(f"❌ Нет записей за период")
         return
     
-    # Создаем CSV
     output = io.StringIO()
     writer = csv.writer(output)
     writer.writerow(['Сотрудник', 'Должность', 'Магазин', 'Дата', 'Статус', 
@@ -554,7 +516,6 @@ async def export_store_data(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     output.close()
     
-    # Возвращаемся в меню
     await admin_panel(update, context)
 
 async def add_admin_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -584,9 +545,7 @@ async def add_admin_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     keyboard = [
         [InlineKeyboardButton("✅ Да", callback_data="confirm_add_admin")],
-        [InlineKeyboardButton("❌ Нет", callbac
-
-k_data="cancel_add_admin")]
+        [InlineKeyboardButton("❌ Нет", callback_data="cancel_add_admin")]
     ]
     
     await update.message.reply_text(
@@ -629,7 +588,6 @@ async def store_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ Нет магазинов с сотрудниками")
         return
     
-    # Период - последние 30 дней
     end_date = date.today().isoformat()
     start_date = (date.today() - timedelta(days=30)).isoformat()
     
@@ -640,7 +598,7 @@ async def store_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         entries = get_all_timesheet_by_period(start_date, end_date, store)
         
         total_hours = sum(e[7] for e in entries if e[7])
-        total_days = len(set([e[3] for e in entries]))  # Уникальные дни
+        total_days = len(set([e[3] for e in entries]))
         
         msg += f"🏪 *{store}*\n"
         msg += f"👥 Сотрудников: {len(employees)}\n"
@@ -683,13 +641,10 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 def main():
-    # Инициализация базы данных
     init_database()
     
-    # Создание приложения
     app = Application.builder().token(BOT_TOKEN).build()
     
-    # Регистрация
     reg_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(register_start, pattern='^register$')],
         states={
@@ -700,20 +655,16 @@ def main():
         fallbacks=[CommandHandler('cancel', cancel)]
     )
     
-    # Добавление администратора
     add_admin_conv = ConversationHandler(
         entry_points=[CallbackQueryHandler(add_admin_start, pattern='^admin_add$')],
         states={
-            ADD_ADMIN_ID: [MessageHandler(filters.TEXT & ~
-
-filters.COMMAND, add_admin_id)],
+            ADD_ADMIN_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_admin_id)],
             ADD_ADMIN_CONFIRM: [CallbackQueryHandler(confirm_add_admin, pattern='^confirm_add_admin$'),
                                CallbackQueryHandler(cancel_add_admin, pattern='^cancel_add_admin$')],
         },
         fallbacks=[CommandHandler('cancel', cancel)]
     )
     
-    # Команды
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_command))
     app.add_handler(CommandHandler("checkin", checkin))
@@ -725,7 +676,98 @@ filters.COMMAND, add_admin_id)],
     app.add_handler(CommandHandler("export", export_timesheet))
     app.add_handler(CommandHandler("stores", stores_menu))
     
-    # Обработчики callback
+    > Nk:
+await query.edit_message_text("❌ Нет магазинов с сотрудниками")
+        return
+    
+    end_date = date.today().isoformat()
+    start_date = (date.today() - timedelta(days=30)).isoformat()
+    
+    msg = "📈 *Статистика по магазинам за 30 дней*\n\n"
+    
+    for store in stores:
+        employees = get_employees_by_store(store)
+        entries = get_all_timesheet_by_period(start_date, end_date, store)
+        
+        total_hours = sum(e[7] for e in entries if e[7])
+        total_days = len(set([e[3] for e in entries]))
+        
+        msg += f"🏪 *{store}*\n"
+        msg += f"👥 Сотрудников: {len(employees)}\n"
+        msg += f"⏱ Всего часов: {total_hours:.1f}\n"
+        msg += f"📅 Рабочих дней: {total_days}\n\n"
+    
+    await query.edit_message_text(msg, parse_mode='Markdown')
+
+async def back_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    await admin_panel(update, context)
+
+async def stores_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if not is_admin(user_id):
+        await update.message.reply_text("❌ Только для администраторов")
+        return
+    
+    stores = get_all_stores()
+    
+    if not stores:
+        await update.message.reply_text("❌ Нет магазинов с сотрудниками")
+        return
+    
+    msg = "🏪 *Магазины и сотрудники*\n\n"
+    
+    for store in stores:
+        employees = get_employees_by_store(store)
+        msg += f"*{store}* ({len(employees)} чел.)\n"
+        for e in employees:
+            admin = "👑 " if e[5] == 1 else ""
+            msg += f"  {admin}{e[1]} - {e[2]}\n"
+        msg += "\n"
+    
+    await update.message.reply_text(msg, parse_mode='Markdown')
+
+async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("❌ Отменено")
+    return ConversationHandler.END
+
+def main():
+    init_database()
+    
+    app = Application.builder().token(BOT_TOKEN).build()
+    
+    reg_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(register_start, pattern='^register$')],
+        states={
+            REGISTER_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_name)],
+            REGISTER_POSITION: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_position)],
+            REGISTER_STORE: [MessageHandler(filters.TEXT & ~filters.COMMAND, register_store)],
+        },
+        fallbacks=[CommandHandler('cancel', cancel)]
+    )
+    
+    add_admin_conv = ConversationHandler(
+        entry_points=[CallbackQueryHandler(add_admin_start, pattern='^admin_add$')],
+        states={
+            ADD_ADMIN_ID: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_admin_id)],
+            ADD_ADMIN_CONFIRM: [CallbackQueryHandler(confirm_add_admin, pattern='^confirm_add_admin$'),
+                               CallbackQueryHandler(cancel_add_admin, pattern='^cancel_add_admin$')],
+        },
+        fallbacks=[CommandHandler('cancel', cancel)]
+    )
+    
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("checkin", checkin))
+    app.add_handler(CommandHandler("checkout", checkout))
+    app.add_handler(CommandHandler("timesheet", timesheet))
+    app.add_handler(CommandHandler("stats", stats))
+    app.add_handler(CommandHandler("admin", admin_panel))
+    app.add_handler(CommandHandler("employees", employees_list))
+    app.add_handler(CommandHandler("export", export_timesheet))
+    app.add_handler(CommandHandler("stores", stores_menu))
+    
     app.add_handler(CallbackQueryHandler(back_to_admin, pattern='^back_to_admin$'))
     app.add_handler(CallbackQueryHandler(export_by_store, pattern='^admin_export_menu$'))
     app.add_handler(CallbackQueryHandler(store_stats, pattern='^admin_store_stats$'))
@@ -733,7 +775,6 @@ filters.COMMAND, add_admin_id)],
     app.add_handler(CallbackQueryHandler(export_by_store, pattern='^admin_by_store$'))
     app.add_handler(CallbackQueryHandler(export_store_data, pattern='^export_store_'))
     
-    # Conversation handlers
     app.add_handler(reg_conv)
     app.add_handler(add_admin_conv)
     
