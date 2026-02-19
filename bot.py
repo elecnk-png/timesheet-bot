@@ -284,21 +284,6 @@ async def cancel_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     return ConversationHandler.END
 
-# ВРЕМЕННО: функция для отладки сообщений
-async def debug_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Отладка всех сообщений"""
-    user_id = update.effective_user.id
-    text = update.message.text
-    logger.info(f"🔥🔥🔥 ПОЛУЧЕНО СООБЩЕНИЕ от {user_id}: '{text}'")
-    logger.info(f"Текущий user_data: {context.user_data}")
-    
-    # Проверяем, есть ли активный ConversationHandler
-    if context.user_data.get('conversation_state'):
-        logger.info(f"Активное состояние: {context.user_data['conversation_state']}")
-    
-    # Пропускаем сообщение дальше
-    return
-
 # Функция для ввода имени при регистрации
 async def enter_full_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Получение ФИО от пользователя"""
@@ -1146,7 +1131,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         await show_add_admin_menu(query)
     
-    # ИСПРАВЛЕНО: Обработчик для назначения администратором
+    # Обработчик для назначения администратором
     elif callback_data.startswith("make_admin_"):
         if not is_super_admin:
             await query.edit_message_text("❌ Недостаточно прав")
@@ -1198,7 +1183,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
 
-# Обработчик текстовых сообщений
+# ИСПРАВЛЕНО: Обработчик текстовых сообщений с проверкой состояния
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка текстовых сообщений"""
     text = update.message.text
@@ -1206,6 +1191,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     logger.info(f"Получено сообщение от {user_id}: {text}")
     
+    # Проверяем, не находится ли пользователь в активном ConversationHandler
+    # Это важно для создания должностей и магазинов
+    if context.user_data.get('conversation_state') is not None:
+        logger.info(f"Пользователь в состоянии {context.user_data['conversation_state']}, пропускаем сообщение для ConversationHandler")
+        return
+    
+    # Проверяем, не является ли сообщение командой
+    if text.startswith('/'):
+        return
+    
+    # Обрабатываем только специальную кнопку
     if text == "👑 Запросить права администратора":
         user = get_user(user_id)
         if not user:
@@ -1589,6 +1585,8 @@ async def create_position(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     position_name = update.message.text.strip()
     
+    logger.info(f"Создание должности: {position_name} от пользователя {user_id}")
+    
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     
@@ -1599,8 +1597,10 @@ async def create_position(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ''', (position_name, user_id, get_today_date_utc8()))
         conn.commit()
         await update.message.reply_text(f"✅ Должность '{position_name}' создана!")
+        logger.info(f"Должность '{position_name}' успешно создана")
     except sqlite3.IntegrityError:
         await update.message.reply_text(f"❌ Должность '{position_name}' уже существует")
+        logger.warning(f"Должность '{position_name}' уже существует")
     finally:
         conn.close()
     
@@ -1701,6 +1701,8 @@ async def create_store_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     store_name = update.message.text.strip()
     context.user_data['new_store_name'] = store_name
     
+    logger.info(f"Получено название магазина: {store_name}")
+    
     await update.message.reply_text(
         f"🏪 Название: {store_name}\n\n"
         f"✏️ Теперь введите адрес магазина:"
@@ -1712,6 +1714,8 @@ async def create_store_address(update: Update, context: ContextTypes.DEFAULT_TYP
     user_id = update.effective_user.id
     store_address = update.message.text.strip()
     store_name = context.user_data.get('new_store_name')
+    
+    logger.info(f"Создание магазина: {store_name}, адрес: {store_address} от пользователя {user_id}")
     
     if not store_name:
         await update.message.reply_text("❌ Ошибка создания. Начните заново.")
@@ -1731,8 +1735,10 @@ async def create_store_address(update: Update, context: ContextTypes.DEFAULT_TYP
             f"Название: {store_name}\n"
             f"Адрес: {store_address}"
         )
+        logger.info(f"Магазин '{store_name}' успешно создан")
     except sqlite3.IntegrityError:
         await update.message.reply_text(f"❌ Магазин '{store_name}' уже существует")
+        logger.warning(f"Магазин '{store_name}' уже существует")
     finally:
         conn.close()
     
@@ -3012,13 +3018,7 @@ async def main_async():
         app.add_handler(CommandHandler("admin", admin_panel))
         app.add_handler(CommandHandler("cancel", cancel_registration))
         
-        # Обработчик текстовых сообщений (для кнопки запроса админки)
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-        
-        # ВРЕМЕННО для отладки (можно удалить позже)
-        # app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, debug_message), group=0)
-        
-        # Остальные ConversationHandler
+        # Остальные ConversationHandler (они должны быть ДО общего обработчика сообщений)
         create_position_conv = ConversationHandler(
             entry_points=[CallbackQueryHandler(button_callback, pattern="^create_position$")],
             states={
@@ -3050,6 +3050,9 @@ async def main_async():
             allow_reentry=True
         )
         app.add_handler(custom_period_conv)
+        
+        # Обработчик текстовых сообщений (для кнопки запроса админки) - ПОСЛЕ ВСЕХ ConversationHandler
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
         
         # Основной обработчик callback-запросов - ПОСЛЕДНИМ
         app.add_handler(CallbackQueryHandler(button_callback))
