@@ -16,7 +16,7 @@ from telegram.ext import (
     filters, ConversationHandler, ContextTypes
 )
 
-# ⭐ КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: добавляем nest_asyncio для работы на хостинге
+# КЛЮЧЕВОЕ ИЗМЕНЕНИЕ: добавляем nest_asyncio для работы на хостинге
 import nest_asyncio
 nest_asyncio.apply()
 
@@ -270,6 +270,14 @@ def get_super_admins() -> List[Tuple[int, str]]:
     conn.close()
     return result
 
+# ИСПРАВЛЕНИЕ 1: Функция для отмены регистрации
+async def cancel_registration(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отмена регистрации"""
+    await update.message.reply_text(
+        "❌ Регистрация отменена. Если захотите зарегистрироваться, используйте /start"
+    )
+    return ConversationHandler.END
+
 # Функции для удаления webhook
 async def delete_webhook():
     """Удаление webhook перед запуском polling"""
@@ -286,12 +294,14 @@ async def delete_webhook():
     except Exception as e:
         logger.error(f"❌ Ошибка при удалении webhook: {e}")
 
-# Обработчики команд
+# ИСПРАВЛЕНИЕ 2: Обновленная функция start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start - регистрация или главное меню"""
     user = update.effective_user
     user_id = user.id
     full_name = user.full_name
+    
+    logger.info(f"Команда /start от пользователя {user_id} ({full_name})")
     
     # Проверяем, зарегистрирован ли пользователь
     conn = sqlite3.connect('timesheet.db')
@@ -305,6 +315,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if employee:
         # Пользователь уже зарегистрирован
         is_admin, is_super_admin = employee
+        conn.close()
         
         if is_super_admin:
             await update.message.reply_text(
@@ -323,8 +334,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"👋 С возвращением, {full_name}!\n"
                 f"Используйте /checkin для начала смены или /timesheet для просмотра табеля."
             )
-        conn.close()
-        return
+        return ConversationHandler.END
     
     # Проверяем, есть ли в системе супер-администраторы
     cursor.execute("SELECT COUNT(*) FROM employees WHERE is_super_admin = 1")
@@ -348,6 +358,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "3️⃣ Создайте магазины в разделе 'Управление магазинами'\n\n"
             "Только после этого другие сотрудники смогут регистрироваться."
         )
+        return ConversationHandler.END
     else:
         # Проверяем наличие должностей и магазинов
         cursor.execute("SELECT COUNT(*) FROM positions")
@@ -369,15 +380,28 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "Вы можете подать заявку на становление администратором:",
                 reply_markup=reply_markup
             )
+            return ConversationHandler.END
         else:
             # Есть должности и магазины - начинаем регистрацию
             positions = get_positions()
-            keyboard = [[InlineKeyboardButton(pos, callback_data=f"reg_pos_{pos}")] 
-                       for pos in positions]
+            if not positions:
+                await update.message.reply_text(
+                    "❌ В системе нет должностей. Обратитесь к администратору."
+                )
+                return ConversationHandler.END
+            
+            # Создаем клавиатуру с должностями
+            keyboard = []
+            for pos in positions:
+                keyboard.append([InlineKeyboardButton(pos, callback_data=f"reg_pos_{pos}")])
+            
+            # Добавляем кнопку отмены
+            keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel_registration")])
+            
             reply_markup = InlineKeyboardMarkup(keyboard)
             
             await update.message.reply_text(
-                "📝 Выберите вашу должность:",
+                "📝 Для регистрации выберите вашу должность:",
                 reply_markup=reply_markup
             )
             return SELECT_POSITION
@@ -634,7 +658,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
-# Обработчики callback-запросов
+# ИСПРАВЛЕНИЕ 3: Обновленная функция button_callback
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка нажатий на инлайн кнопки"""
     query = update.callback_query
@@ -643,66 +667,124 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     callback_data = query.data
     user_id = query.from_user.id
     
+    logger.info(f"Callback: {callback_data} от пользователя {user_id}")
+    
+    # ИСПРАВЛЕНИЕ: Обработка отмены регистрации
+    if callback_data == "cancel_registration":
+        await query.edit_message_text("❌ Регистрация отменена.")
+        return ConversationHandler.END
+    
     # Получаем информацию о пользователе
     user = get_user(user_id)
+    
+    # ИСПРАВЛЕНИЕ: Обработка регистрации (до проверки авторизации)
+    if callback_data.startswith("reg_pos_"):
+        if user:
+            await query.edit_message_text("❌ Вы уже зарегистрированы!")
+            return ConversationHandler.END
+            
+        position = callback_data[8:]
+        context.user_data['reg_position'] = position
+        
+        stores = get_stores()
+        if not stores:
+            await query.edit_message_text(
+                "❌ В системе нет магазинов. Обратитесь к администратору."
+            )
+            return ConversationHandler.END
+        
+        keyboard = []
+        for store_name, address in stores:
+            keyboard.append([
+                InlineKeyboardButton(f"{store_name}", callback_data=f"reg_store_{store_name}")
+            ])
+        keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel_registration")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            "🏪 Теперь выберите ваш магазин:",
+            reply_markup=reply_markup
+        )
+        return SELECT_STORE
+    
+    # ИСПРАВЛЕНИЕ: Обработка выбора магазина
+    elif callback_data.startswith("reg_store_"):
+        if user:
+            await query.edit_message_text("❌ Вы уже зарегистрированы!")
+            return ConversationHandler.END
+            
+        store = callback_data[10:]
+        position = context.user_data.get('reg_position')
+        
+        if not position:
+            await query.edit_message_text(
+                "❌ Ошибка регистрации. Пожалуйста, начните заново с /start"
+            )
+            return ConversationHandler.END
+        
+        # Завершаем регистрацию
+        full_name = query.from_user.full_name
+        
+        conn = sqlite3.connect('timesheet.db')
+        cursor = conn.cursor()
+        
+        try:
+            # Проверяем, не зарегистрирован ли уже пользователь
+            cursor.execute("SELECT user_id FROM employees WHERE user_id = ?", (user_id,))
+            if cursor.fetchone():
+                await query.edit_message_text(
+                    "❌ Вы уже зарегистрированы! Используйте /start"
+                )
+                conn.close()
+                return ConversationHandler.END
+            
+            # Регистрируем нового пользователя
+            cursor.execute('''
+                INSERT INTO employees (user_id, full_name, position, store, reg_date, is_admin, is_super_admin)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (user_id, full_name, position, store, get_today_date_utc8(), 0, 0))
+            conn.commit()
+            
+            logger.info(f"Новый пользователь зарегистрирован: {user_id} - {full_name} ({position}, {store})")
+            
+            await query.edit_message_text(
+                f"✅ Регистрация успешно завершена!\n\n"
+                f"👤 {full_name}\n"
+                f"📋 Должность: {position}\n"
+                f"🏪 Магазин: {store}\n\n"
+                f"Теперь вы можете использовать команды:\n"
+                f"/checkin - начать рабочий день\n"
+                f"/checkout - закончить рабочий день\n"
+                f"/timesheet - посмотреть табель\n"
+                f"/stats - статистика"
+            )
+            
+        except Exception as e:
+            logger.error(f"Ошибка при регистрации: {e}")
+            await query.edit_message_text(
+                "❌ Произошла ошибка при регистрации. Попробуйте позже."
+            )
+        finally:
+            conn.close()
+        
+        # Очищаем временные данные
+        context.user_data.pop('reg_position', None)
+        
+        return ConversationHandler.END
+    
+    # Для всех остальных callback_data проверяем авторизацию
     if not user:
         await query.edit_message_text("❌ Вы не зарегистрированы. Используйте /start")
         return
     
     full_name, position, store, is_admin, is_super_admin = user
     
-    # Обработка различных callback_data
     if callback_data == "close":
         await query.delete_message()
         return
     
     elif callback_data == "request_admin":
         await handle_admin_request(query, context, user_id, user)
-    
-    elif callback_data.startswith("reg_pos_"):
-        position = callback_data[8:]
-        context.user_data['reg_position'] = position
-        
-        stores = get_stores()
-        keyboard = [[InlineKeyboardButton(f"{store[0]} ({store[1]})", 
-                    callback_data=f"reg_store_{store[0]}")] for store in stores]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await query.edit_message_text(
-            "🏪 Выберите ваш магазин:",
-            reply_markup=reply_markup
-        )
-        return SELECT_STORE
-    
-    elif callback_data.startswith("reg_store_"):
-        store = callback_data[10:]
-        position = context.user_data.get('reg_position')
-        
-        if not position:
-            await query.edit_message_text("❌ Ошибка регистрации. Начните заново с /start")
-            return
-        
-        # Завершаем регистрацию
-        conn = sqlite3.connect('timesheet.db')
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO employees (user_id, full_name, position, store, reg_date, is_admin, is_super_admin)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (user_id, query.from_user.full_name, position, store, 
-              get_today_date_utc8(), 0, 0))
-        conn.commit()
-        conn.close()
-        
-        await query.edit_message_text(
-            f"✅ Регистрация завершена!\n\n"
-            f"Должность: {position}\n"
-            f"Магазин: {store}\n\n"
-            f"Теперь вы можете использовать:\n"
-            f"/checkin - начало смены\n"
-            f"/checkout - конец смены\n"
-            f"/timesheet - просмотр табеля"
-        )
-        return ConversationHandler.END
     
     elif callback_data == "admin_list":
         if not (is_admin or is_super_admin):
@@ -3027,7 +3109,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return ConversationHandler.END
 
-# ⭐ ИСПРАВЛЕННАЯ ЧАСТЬ ДЛЯ ЗАПУСКА БОТА
+# ИСПРАВЛЕНИЕ 4: Основная функция запуска
 async def main_async():
     """Основная асинхронная функция"""
     try:
@@ -3050,16 +3132,32 @@ async def main_async():
         app.add_handler(CommandHandler("timesheet", timesheet))
         app.add_handler(CommandHandler("stats", stats))
         app.add_handler(CommandHandler("admin", admin_panel))
+        app.add_handler(CommandHandler("cancel", cancel_registration))
         
-        # ConversationHandler для регистрации
+        # ИСПРАВЛЕНИЕ: ConversationHandler для регистрации
         reg_conv_handler = ConversationHandler(
-            entry_points=[CallbackQueryHandler(button_callback, pattern="^reg_pos_")],
+            entry_points=[
+                CommandHandler("start", start),
+                CallbackQueryHandler(button_callback, pattern="^reg_pos_")
+            ],
             states={
-                SELECT_POSITION: [CallbackQueryHandler(button_callback, pattern="^reg_pos_")],
-                SELECT_STORE: [CallbackQueryHandler(button_callback, pattern="^reg_store_")],
+                SELECT_POSITION: [
+                    CallbackQueryHandler(button_callback, pattern="^reg_pos_"),
+                    CallbackQueryHandler(button_callback, pattern="^cancel_registration$"),
+                    CommandHandler("cancel", cancel_registration)
+                ],
+                SELECT_STORE: [
+                    CallbackQueryHandler(button_callback, pattern="^reg_store_"),
+                    CallbackQueryHandler(button_callback, pattern="^cancel_registration$"),
+                    CommandHandler("cancel", cancel_registration)
+                ],
             },
-            fallbacks=[CommandHandler("cancel", cancel)],
-            allow_reentry=True
+            fallbacks=[
+                CommandHandler("cancel", cancel_registration),
+                CommandHandler("start", start)
+            ],
+            allow_reentry=True,
+            per_message=False
         )
         app.add_handler(reg_conv_handler)
         
@@ -3110,9 +3208,8 @@ async def main_async():
         logger.error(f"❌ Fatal error in main_async: {e}", exc_info=True)
         raise
 
-# ⭐ УПРОЩЕННАЯ ФУНКЦИЯ MAIN
 def main():
-    """Точка входа - упрощенная версия с nest_asyncio"""
+    """Точка входа"""
     try:
         asyncio.run(main_async())
     except KeyboardInterrupt:
