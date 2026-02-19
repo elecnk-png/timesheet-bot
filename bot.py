@@ -1248,7 +1248,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
 
-# Обработчик текстовых сообщений
+# ИСПРАВЛЕНО: Обработчик текстовых сообщений с проверкой состояний
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка текстовых сообщений"""
     text = update.message.text
@@ -1256,6 +1256,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     logger.info(f"Получено сообщение от {user_id}: {text}")
     
+    # Проверяем, не находимся ли мы в каком-либо ConversationHandler
+    if context.user_data.get('conversation_state'):
+        logger.info(f"Пользователь в состоянии {context.user_data['conversation_state']}, пропускаем обработку")
+        return
+    
+    # Обработка кнопки запроса админки
     if text == "👑 Запросить права администратора":
         user = get_user(user_id)
         if not user:
@@ -3105,15 +3111,6 @@ async def main():
         # Создаем приложение
         app = Application.builder().token(BOT_TOKEN).build()
         
-        # Добавляем обработчики
-        app.add_handler(CommandHandler("start", start))
-        app.add_handler(CommandHandler("checkin", checkin))
-        app.add_handler(CommandHandler("checkout", checkout))
-        app.add_handler(CommandHandler("timesheet", timesheet))
-        app.add_handler(CommandHandler("stats", stats))
-        app.add_handler(CommandHandler("admin", admin_panel))
-        app.add_handler(CommandHandler("cancel", cancel_registration))
-        
         # ConversationHandler для регистрации
         reg_conv_handler = ConversationHandler(
             entry_points=[CommandHandler("start", start)],
@@ -3127,36 +3124,54 @@ async def main():
         )
         app.add_handler(reg_conv_handler)
         
-        # Обработчик текстовых сообщений
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-        
-        # Обработчик callback-запросов
-        app.add_handler(CallbackQueryHandler(button_callback))
-        
-        # Остальные ConversationHandler
-        app.add_handler(ConversationHandler(
+        # ConversationHandler для создания должности
+        create_position_conv = ConversationHandler(
             entry_points=[CallbackQueryHandler(button_callback, pattern="^create_position$")],
-            states={CREATE_POSITION_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_position)]},
-            fallbacks=[CommandHandler("cancel", cancel)]
-        ))
+            states={
+                CREATE_POSITION_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_position)],
+            },
+            fallbacks=[CommandHandler("cancel", cancel)],
+            allow_reentry=True
+        )
+        app.add_handler(create_position_conv)
         
-        app.add_handler(ConversationHandler(
+        # ConversationHandler для создания магазина
+        create_store_conv = ConversationHandler(
             entry_points=[CallbackQueryHandler(button_callback, pattern="^create_store$")],
             states={
                 CREATE_STORE_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_store_name)],
                 CREATE_STORE_ADDRESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_store_address)],
             },
-            fallbacks=[CommandHandler("cancel", cancel)]
-        ))
+            fallbacks=[CommandHandler("cancel", cancel)],
+            allow_reentry=True
+        )
+        app.add_handler(create_store_conv)
         
-        app.add_handler(ConversationHandler(
+        # ConversationHandler для пользовательского периода
+        custom_period_conv = ConversationHandler(
             entry_points=[CallbackQueryHandler(button_callback, pattern="^period_custom$")],
             states={
                 CUSTOM_PERIOD_START: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_custom_period_start)],
                 CUSTOM_PERIOD_END: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_custom_period_end)],
             },
-            fallbacks=[CommandHandler("cancel", cancel)]
-        ))
+            fallbacks=[CommandHandler("cancel", cancel)],
+            allow_reentry=True
+        )
+        app.add_handler(custom_period_conv)
+        
+        # Обычные обработчики команд
+        app.add_handler(CommandHandler("checkin", checkin))
+        app.add_handler(CommandHandler("checkout", checkout))
+        app.add_handler(CommandHandler("timesheet", timesheet))
+        app.add_handler(CommandHandler("stats", stats))
+        app.add_handler(CommandHandler("admin", admin_panel))
+        app.add_handler(CommandHandler("cancel", cancel_registration))
+        
+        # Обработчик текстовых сообщений (только для кнопки запроса админки)
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+        
+        # Обработчик callback-запросов
+        app.add_handler(CallbackQueryHandler(button_callback))
         
         logger.info("🚀 Бот запускается...")
         
