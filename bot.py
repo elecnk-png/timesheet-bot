@@ -884,18 +884,22 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif callback_data == "request_admin":
         await handle_admin_request(query, context, user_id, user)
     
-    # ИСПРАВЛЕНО: Добавлены обработчики для команд обычного пользователя в админке
+    # Добавлены обработчики для команд обычного пользователя в админке
     elif callback_data == "admin_checkin":
         await checkin(update, context)
+        await query.delete_message()
     
     elif callback_data == "admin_checkout":
         await checkout(update, context)
+        await query.delete_message()
     
     elif callback_data == "admin_timesheet":
         await timesheet(update, context)
+        await query.delete_message()
     
     elif callback_data == "admin_stats":
         await stats(update, context)
+        await query.delete_message()
     
     elif callback_data == "admin_list":
         if not (is_admin or is_super_admin):
@@ -909,7 +913,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         await show_employees_by_store(query)
     
-    # ИСПРАВЛЕНО: Обработка выбора периода
+    # Обработка выбора периода
     elif callback_data == "period_selection":
         if not (is_admin or is_super_admin):
             await query.edit_message_text("❌ Недостаточно прав")
@@ -943,7 +947,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['period_days'] = days
             await show_export_options(query, days)
     
-    # ИСПРАВЛЕНО: Обработка экспорта
+    # Обработка экспорта
     elif callback_data == "export_confirmed":
         if not (is_admin or is_super_admin):
             return
@@ -1192,7 +1196,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         await show_add_admin_menu(query)
     
-    # ИСПРАВЛЕНО: Обработчик для назначения администратором
+    # Обработчик для назначения администратором
     elif callback_data.startswith("make_admin_"):
         if not is_super_admin:
             await query.edit_message_text("❌ Недостаточно прав")
@@ -3087,49 +3091,22 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return ConversationHandler.END
 
-# Основная функция запуска
-async def main_async():
-    """Основная асинхронная функция"""
+# ИСПРАВЛЕНО: Упрощенная функция запуска
+async def main():
+    """Упрощенная функция запуска"""
     try:
+        # Удаляем webhook
         await delete_webhook()
         await asyncio.sleep(1)
+        
+        # Инициализируем базу данных
         init_database()
         
+        # Создаем приложение
         app = Application.builder().token(BOT_TOKEN).build()
         
-        # ВАЖНО: СНАЧАЛА добавляем ConversationHandler
-        reg_conv_handler = ConversationHandler(
-            entry_points=[
-                CommandHandler("start", start),
-            ],
-            states={
-                ENTER_FULL_NAME: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, enter_full_name),
-                    CommandHandler("cancel", cancel_registration)
-                ],
-                SELECT_POSITION: [
-                    CallbackQueryHandler(button_callback, pattern="^reg_pos_"),
-                    CallbackQueryHandler(button_callback, pattern="^cancel_registration$"),
-                    CommandHandler("cancel", cancel_registration)
-                ],
-                SELECT_STORE: [
-                    CallbackQueryHandler(button_callback, pattern="^reg_store_"),
-                    CallbackQueryHandler(button_callback, pattern="^cancel_registration$"),
-                    CommandHandler("cancel", cancel_registration)
-                ],
-            },
-            fallbacks=[
-                CommandHandler("cancel", cancel_registration),
-                CommandHandler("start", start)
-            ],
-            name="registration_conversation",
-            persistent=False,
-            allow_reentry=True,
-            per_message=False
-        )
-        app.add_handler(reg_conv_handler)
-        
-        # ПОТОМ остальные обработчики команд
+        # Добавляем обработчики
+        app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("checkin", checkin))
         app.add_handler(CommandHandler("checkout", checkout))
         app.add_handler(CommandHandler("timesheet", timesheet))
@@ -3137,61 +3114,63 @@ async def main_async():
         app.add_handler(CommandHandler("admin", admin_panel))
         app.add_handler(CommandHandler("cancel", cancel_registration))
         
-        # Обработчик текстовых сообщений (для кнопки запроса админки)
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-        
-        # Остальные ConversationHandler
-        create_position_conv = ConversationHandler(
-            entry_points=[CallbackQueryHandler(button_callback, pattern="^create_position$")],
+        # ConversationHandler для регистрации
+        reg_conv_handler = ConversationHandler(
+            entry_points=[CommandHandler("start", start)],
             states={
-                CREATE_POSITION_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_position)],
+                ENTER_FULL_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, enter_full_name)],
+                SELECT_POSITION: [CallbackQueryHandler(button_callback, pattern="^reg_pos_")],
+                SELECT_STORE: [CallbackQueryHandler(button_callback, pattern="^reg_store_")],
             },
-            fallbacks=[CommandHandler("cancel", cancel)],
+            fallbacks=[CommandHandler("cancel", cancel_registration)],
             allow_reentry=True
         )
-        app.add_handler(create_position_conv)
+        app.add_handler(reg_conv_handler)
         
-        create_store_conv = ConversationHandler(
+        # Обработчик текстовых сообщений
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+        
+        # Обработчик callback-запросов
+        app.add_handler(CallbackQueryHandler(button_callback))
+        
+        # Остальные ConversationHandler
+        app.add_handler(ConversationHandler(
+            entry_points=[CallbackQueryHandler(button_callback, pattern="^create_position$")],
+            states={CREATE_POSITION_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_position)]},
+            fallbacks=[CommandHandler("cancel", cancel)]
+        ))
+        
+        app.add_handler(ConversationHandler(
             entry_points=[CallbackQueryHandler(button_callback, pattern="^create_store$")],
             states={
                 CREATE_STORE_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_store_name)],
                 CREATE_STORE_ADDRESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_store_address)],
             },
-            fallbacks=[CommandHandler("cancel", cancel)],
-            allow_reentry=True
-        )
-        app.add_handler(create_store_conv)
+            fallbacks=[CommandHandler("cancel", cancel)]
+        ))
         
-        custom_period_conv = ConversationHandler(
+        app.add_handler(ConversationHandler(
             entry_points=[CallbackQueryHandler(button_callback, pattern="^period_custom$")],
             states={
                 CUSTOM_PERIOD_START: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_custom_period_start)],
                 CUSTOM_PERIOD_END: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_custom_period_end)],
             },
-            fallbacks=[CommandHandler("cancel", cancel)],
-            allow_reentry=True
-        )
-        app.add_handler(custom_period_conv)
+            fallbacks=[CommandHandler("cancel", cancel)]
+        ))
         
-        # Основной обработчик callback-запросов - ПОСЛЕДНИМ
-        app.add_handler(CallbackQueryHandler(button_callback))
+        logger.info("🚀 Бот запускается...")
         
-        logger.info("🚀 Bot started successfully")
-        
+        # Запускаем polling
         await app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
         
     except Exception as e:
-        logger.error(f"❌ Fatal error in main_async: {e}", exc_info=True)
+        logger.error(f"❌ Ошибка: {e}", exc_info=True)
         raise
 
-def main():
-    """Точка входа"""
-    try:
-        asyncio.run(main_async())
-    except KeyboardInterrupt:
-        logger.info("🛑 Bot stopped by user")
-    except Exception as e:
-        logger.error(f"💥 Fatal error: {e}", exc_info=True)
-
 if __name__ == '__main__':
-    main()
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        logger.info("🛑 Бот остановлен")
+    except Exception as e:
+        logger.error(f"💥 Фатальная ошибка: {e}", exc_info=True)
