@@ -105,7 +105,8 @@ def init_database():
             store TEXT NOT NULL,
             reg_date TEXT NOT NULL,
             is_admin INTEGER DEFAULT 0,
-            is_super_admin INTEGER DEFAULT 0
+            is_super_admin INTEGER DEFAULT 0,
+            can_request_admin INTEGER DEFAULT 0
         )
     ''')
     
@@ -226,7 +227,7 @@ def get_user(user_id: int) -> Optional[Tuple]:
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT full_name, position, store, is_admin, is_super_admin FROM employees WHERE user_id = ?",
+        "SELECT full_name, position, store, is_admin, is_super_admin, can_request_admin FROM employees WHERE user_id = ?",
         (user_id,)
     )
     result = cursor.fetchone()
@@ -283,15 +284,19 @@ async def cancel_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     return ConversationHandler.END
 
-# ИСПРАВЛЕНО: функция для отладки сообщений (пропускает сообщения дальше)
+# ВРЕМЕННО: функция для отладки сообщений
 async def debug_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Отладка всех сообщений (пропускает дальше)"""
+    """Отладка всех сообщений"""
     user_id = update.effective_user.id
     text = update.message.text
     logger.info(f"🔥🔥🔥 ПОЛУЧЕНО СООБЩЕНИЕ от {user_id}: '{text}'")
     logger.info(f"Текущий user_data: {context.user_data}")
     
-    # ВАЖНО: возвращаем None, чтобы сообщение пошло к следующим обработчикам
+    # Проверяем, есть ли активный ConversationHandler
+    if context.user_data.get('conversation_state'):
+        logger.info(f"Активное состояние: {context.user_data['conversation_state']}")
+    
+    # Пропускаем сообщение дальше
     return
 
 # Функция для ввода имени при регистрации
@@ -370,14 +375,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT is_admin, is_super_admin FROM employees WHERE user_id = ?",
+        "SELECT is_admin, is_super_admin, can_request_admin FROM employees WHERE user_id = ?",
         (user_id,)
     )
     employee = cursor.fetchone()
     
     if employee:
         # Пользователь уже зарегистрирован
-        is_admin, is_super_admin = employee
+        is_admin, is_super_admin, can_request_admin = employee
         stored_name = get_user(user_id)[0]
         conn.close()
         
@@ -396,14 +401,21 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Используйте /admin для входа в панель управления."
             )
         else:
+            # Для обычных сотрудников показываем разные кнопки в зависимости от возможности запросить админку
+            keyboard = []
+            if can_request_admin:
+                keyboard.append([KeyboardButton("👑 Запросить права администратора")])
+            
+            reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True) if keyboard else None
+            
             await update.message.reply_text(
                 f"👋 Привет, {stored_name}!\n\n"
                 f"📋 Что можно делать:\n"
                 f"✅ /checkin - отметить начало рабочего дня\n"
                 f"✅ /checkout - отметить конец рабочего дня\n"
                 f"📊 /timesheet - посмотреть свой табель\n"
-                f"📈 /stats - статистика за 30 дней\n\n"
-                f"Просто отправьте команду!"
+                f"📈 /stats - статистика за 30 дней",
+                reply_markup=reply_markup
             )
         return ConversationHandler.END
     
@@ -417,10 +429,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Первый пользователь становится супер-администратором
         logger.info("Первый пользователь - назначаем супер-админом")
         cursor.execute('''
-            INSERT INTO employees (user_id, full_name, position, store, reg_date, is_admin, is_super_admin)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO employees (user_id, full_name, position, store, reg_date, is_admin, is_super_admin, can_request_admin)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         ''', (user_id, full_name, "Администратор", "Главный офис", 
-              get_today_date_utc8(), 1, 1))
+              get_today_date_utc8(), 1, 1, 0))
         conn.commit()
         conn.close()
         
@@ -444,6 +456,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"Должностей: {positions_count}, Магазинов: {stores_count}")
         
         if positions_count == 0 or stores_count == 0:
+            # Нет должностей или магазинов - предлагаем стать администратором
             logger.info("Нет должностей или магазинов - предлагаем стать админом")
             keyboard = [
                 [InlineKeyboardButton("👑 Стать администратором", callback_data="request_admin")]
@@ -674,8 +687,6 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("👥 Все сотрудники", callback_data="admin_list")],
         [InlineKeyboardButton("📊 По магазинам", callback_data="admin_by_store")],
-        [InlineKeyboardButton("📥 Экспорт CSV (подтв.)", callback_data="admin_export_menu")],
-        [InlineKeyboardButton("📥 Экспорт CSV (все)", callback_data="admin_export_all_menu")],
         [InlineKeyboardButton("📅 Выбрать период", callback_data="period_selection")],
         [InlineKeyboardButton("📈 Статистика по магазинам", callback_data="admin_store_stats")],
         [InlineKeyboardButton("✅ Подтверждение смен", callback_data="admin_confirm")],
@@ -804,6 +815,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         user_id = query.from_user.id
         
+        # Проверяем, является ли должность "директор магазина"
+        can_request_admin = 1 if position.lower() == "директор магазина" else 0
+        
         conn = sqlite3.connect('timesheet.db')
         cursor = conn.cursor()
         
@@ -819,12 +833,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             # Регистрируем нового пользователя
             cursor.execute('''
-                INSERT INTO employees (user_id, full_name, position, store, reg_date, is_admin, is_super_admin)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (user_id, full_name, position, store, get_today_date_utc8(), 0, 0))
+                INSERT INTO employees (user_id, full_name, position, store, reg_date, is_admin, is_super_admin, can_request_admin)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (user_id, full_name, position, store, get_today_date_utc8(), 0, 0, can_request_admin))
             conn.commit()
             
             logger.info(f"✅✅✅ Новый пользователь зарегистрирован: {user_id} - {full_name} ({position}, {store})")
+            logger.info(f"Может запрашивать админку: {can_request_admin}")
             
             await query.edit_message_text(
                 f"✅ Регистрация успешно завершена!\n\n"
@@ -833,14 +848,21 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"🏪 Магазин: {store}"
             )
             
+            # Создаем клавиатуру для обычного сотрудника
+            keyboard = []
+            if can_request_admin:
+                keyboard.append([KeyboardButton("👑 Запросить права администратора")])
+            
+            reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True) if keyboard else None
+            
             await query.message.reply_text(
                 f"👋 Привет, {full_name}!\n\n"
                 f"📋 Что можно делать:\n"
                 f"✅ /checkin - отметить начало рабочего дня\n"
                 f"✅ /checkout - отметить конец рабочего дня\n"
                 f"📊 /timesheet - посмотреть свой табель\n"
-                f"📈 /stats - статистика за 30 дней\n\n"
-                f"Просто отправьте команду!"
+                f"📈 /stats - статистика за 30 дней",
+                reply_markup=reply_markup
             )
             
         except Exception as e:
@@ -863,7 +885,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("❌ Вы не зарегистрированы. Используйте /start")
         return
     
-    full_name, position, store, is_admin, is_super_admin = user
+    full_name, position, store, is_admin, is_super_admin, can_request_admin = user
     
     if callback_data == "close":
         await query.delete_message()
@@ -883,18 +905,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("❌ Недостаточно прав")
             return
         await show_employees_by_store(query)
-    
-    elif callback_data == "admin_export_menu":
-        if not (is_admin or is_super_admin):
-            await query.edit_message_text("❌ Недостаточно прав")
-            return
-        await show_export_menu_confirmed(query)
-    
-    elif callback_data == "admin_export_all_menu":
-        if not (is_admin or is_super_admin):
-            await query.edit_message_text("❌ Недостаточно прав")
-            return
-        await show_export_menu_all(query)
     
     elif callback_data == "period_selection":
         if not (is_admin or is_super_admin):
@@ -942,7 +952,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             "✏️ Введите название новой должности:"
         )
-        logger.info("🔥 Возвращаем CREATE_POSITION_NAME")
         return CREATE_POSITION_NAME
     
     elif callback_data == "list_positions":
@@ -971,7 +980,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             "✏️ Введите название магазина:"
         )
-        logger.info("🔥 Возвращаем CREATE_STORE_NAME")
         return CREATE_STORE_NAME
     
     elif callback_data == "list_stores":
@@ -993,80 +1001,19 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         store_name = callback_data[17:]
         await delete_store(query, store_name)
     
-    elif callback_data.startswith("export_store_confirmed_"):
-        if not (is_admin or is_super_admin):
-            await query.edit_message_text("❌ Недостаточно прав")
-            return
-        store = callback_data[22:]
-        await export_csv(query, store, confirmed_only=True)
-    
-    elif callback_data == "export_store_confirmed_all":
-        if not (is_admin or is_super_admin):
-            await query.edit_message_text("❌ Недостаточно прав")
-            return
-        await export_csv(query, "all", confirmed_only=True)
-    
-    elif callback_data.startswith("export_store_all_"):
-        if not (is_admin or is_super_admin):
-            await query.edit_message_text("❌ Недостаточно прав")
-            return
-        store = callback_data[16:]
-        await export_csv(query, store, confirmed_only=False)
-    
-    elif callback_data == "export_store_all_all":
-        if not (is_admin or is_super_admin):
-            await query.edit_message_text("❌ Недостаточно прав")
-            return
-        await export_csv(query, "all", confirmed_only=False)
-    
-    elif callback_data.startswith("period_"):
-        if not (is_admin or is_super_admin):
-            await query.edit_message_text("❌ Недостаточно прав")
-            return
-        
-        period = callback_data[7:]
-        if period == "custom":
-            await query.edit_message_text(
-                "📅 Введите начальную дату в формате ГГГГ-ММ-ДД:"
-            )
-            return CUSTOM_PERIOD_START
-        else:
-            days = 0
-            if period == "7":
-                days = 7
-            elif period == "14":
-                days = 14
-            elif period == "30":
-                days = 30
-            elif period == "90":
-                days = 90
-            elif period == "all":
-                days = 36500
-            
-            context.user_data['period_days'] = days
-            await show_export_options(query, days)
-    
-    elif callback_data == "export_confirmed":
-        if not (is_admin or is_super_admin):
-            return
-        days = context.user_data.get('period_days', 30)
-        await export_csv_period(query, days, confirmed_only=True)
-    
-    elif callback_data == "export_all":
-        if not (is_admin or is_super_admin):
-            return
-        days = context.user_data.get('period_days', 30)
-        await export_csv_period(query, days, confirmed_only=False)
-    
-    elif callback_data == "confirm_today":
+    elif callback_data.startswith("confirm_today"):
         if not (is_admin or is_super_admin):
             return
         await show_unconfirmed_today(query)
     
-    elif callback_data == "confirm_period":
+    elif callback_data.startswith("confirm_period"):
         if not (is_admin or is_super_admin):
             return
-        await show_period_confirm_menu(query)
+        if callback_data == "confirm_period":
+            await show_period_confirm_menu(query)
+        else:
+            days = int(callback_data[14:])
+            await show_unconfirmed_period(query, days)
     
     elif callback_data == "confirm_all_today":
         if not (is_admin or is_super_admin):
@@ -1082,12 +1029,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not (is_admin or is_super_admin):
             return
         await show_confirm_stats(query)
-    
-    elif callback_data.startswith("confirm_period_"):
-        if not (is_admin or is_super_admin):
-            return
-        days = int(callback_data[14:])
-        await show_unconfirmed_period(query, days)
     
     elif callback_data.startswith("confirm_store_"):
         if not (is_admin or is_super_admin):
@@ -1205,43 +1146,137 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         await show_add_admin_menu(query)
     
+    # ИСПРАВЛЕНО: Обработчик для назначения администратором
     elif callback_data.startswith("make_admin_"):
         if not is_super_admin:
             await query.edit_message_text("❌ Недостаточно прав")
             return
         
         target_id = int(callback_data[10:])
+        logger.info(f"Назначение администратором пользователя {target_id}")
         
         conn = sqlite3.connect('timesheet.db')
         cursor = conn.cursor()
-        cursor.execute("SELECT full_name FROM employees WHERE user_id = ?", (target_id,))
-        result = cursor.fetchone()
-        
-        if not result:
-            await query.edit_message_text("❌ Сотрудник не найден")
-            conn.close()
-            return
-        
-        target_name = result[0]
-        
-        cursor.execute("UPDATE employees SET is_admin = 1 WHERE user_id = ?", (target_id,))
-        conn.commit()
-        conn.close()
-        
-        await query.edit_message_text(f"✅ Сотрудник {target_name} назначен администратором!")
         
         try:
-            await query.message.bot.send_message(
-                target_id,
-                f"👑 Поздравляем! Вы назначены администратором!\n\n"
-                f"Теперь вам доступна панель администратора (/admin)."
-            )
+            # Получаем информацию о сотруднике
+            cursor.execute("SELECT full_name FROM employees WHERE user_id = ?", (target_id,))
+            result = cursor.fetchone()
+            
+            if not result:
+                await query.edit_message_text("❌ Сотрудник не найден")
+                conn.close()
+                return
+            
+            target_name = result[0]
+            
+            # Делаем сотрудника администратором
+            cursor.execute("UPDATE employees SET is_admin = 1 WHERE user_id = ?", (target_id,))
+            conn.commit()
+            
+            logger.info(f"Сотрудник {target_name} назначен администратором")
+            await query.edit_message_text(f"✅ Сотрудник {target_name} назначен администратором!")
+            
+            # Уведомляем нового администратора
+            try:
+                await query.message.bot.send_message(
+                    target_id,
+                    f"👑 Поздравляем! Вы назначены администратором!\n\n"
+                    f"Теперь вам доступна панель администратора (/admin)."
+                )
+            except Exception as e:
+                logger.error(f"Failed to notify new admin {target_id}: {e}")
+            
         except Exception as e:
-            logger.error(f"Failed to notify new admin {target_id}: {e}")
+            logger.error(f"Ошибка при назначении администратора: {e}")
+            await query.edit_message_text("❌ Произошла ошибка при назначении администратора")
+        finally:
+            conn.close()
         
+        # Возвращаемся в меню
         keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
+
+# Обработчик текстовых сообщений
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка текстовых сообщений"""
+    text = update.message.text
+    user_id = update.effective_user.id
+    
+    logger.info(f"Получено сообщение от {user_id}: {text}")
+    
+    if text == "👑 Запросить права администратора":
+        user = get_user(user_id)
+        if not user:
+            await update.message.reply_text("❌ Сначала зарегистрируйтесь через /start")
+            return
+        
+        full_name, position, store, is_admin, is_super_admin, can_request_admin = user
+        
+        if is_admin or is_super_admin:
+            await update.message.reply_text("❌ Вы уже являетесь администратором")
+            return
+        
+        if not can_request_admin:
+            await update.message.reply_text("❌ У вас нет прав для запроса администраторских полномочий")
+            return
+        
+        # Создаем заявку на админа
+        await handle_admin_request_from_message(update, context, user_id, user)
+
+# Функция для обработки заявки на админа из сообщения
+async def handle_admin_request_from_message(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, user_info: Tuple):
+    """Обработка заявки на становление администратором из сообщения"""
+    full_name, position, store, is_admin, is_super_admin, can_request_admin = user_info
+    
+    # Проверяем, нет ли уже активной заявки
+    conn = sqlite3.connect('timesheet.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT id FROM admin_requests 
+        WHERE user_id = ? AND status = 'pending'
+    ''', (user_id,))
+    
+    existing = cursor.fetchone()
+    
+    if existing:
+        await update.message.reply_text(
+            "❌ У вас уже есть активная заявка на становление администратором"
+        )
+        conn.close()
+        return
+    
+    # Создаем заявку
+    cursor.execute('''
+        INSERT INTO admin_requests 
+        (request_date, user_id, user_name, user_position, user_store, status)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (get_today_date_utc8(), user_id, full_name, position, store, 'pending'))
+    
+    conn.commit()
+    conn.close()
+    
+    await update.message.reply_text(
+        "✅ Заявка на становление администратором отправлена!\n"
+        "Ожидайте решения супер-администратора."
+    )
+    
+    # Уведомляем супер-админов
+    super_admins = get_super_admins()
+    for admin_id, admin_name in super_admins:
+        try:
+            await update.message.bot.send_message(
+                admin_id,
+                f"👑 Новая заявка на становление администратором!\n\n"
+                f"От: {full_name}\n"
+                f"Должность: {position}\n"
+                f"Магазин: {store}\n"
+                f"ID: {user_id}\n\n"
+                f"Используйте /admin для рассмотрения заявки."
+            )
+        except Exception as e:
+            logger.error(f"Failed to notify super admin {admin_id}: {e}")
 
 # Вспомогательные функции для административных панелей
 async def show_admin_panel(query):
@@ -1249,8 +1284,6 @@ async def show_admin_panel(query):
     keyboard = [
         [InlineKeyboardButton("👥 Все сотрудники", callback_data="admin_list")],
         [InlineKeyboardButton("📊 По магазинам", callback_data="admin_by_store")],
-        [InlineKeyboardButton("📥 Экспорт CSV (подтв.)", callback_data="admin_export_menu")],
-        [InlineKeyboardButton("📥 Экспорт CSV (все)", callback_data="admin_export_all_menu")],
         [InlineKeyboardButton("📅 Выбрать период", callback_data="period_selection")],
         [InlineKeyboardButton("📈 Статистика по магазинам", callback_data="admin_store_stats")],
         [InlineKeyboardButton("✅ Подтверждение смен", callback_data="admin_confirm")],
@@ -1271,7 +1304,7 @@ async def show_all_employees(query):
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     cursor.execute('''
-        SELECT full_name, position, store, is_admin, is_super_admin 
+        SELECT full_name, position, store, is_admin, is_super_admin, can_request_admin 
         FROM employees ORDER BY store, full_name
     ''')
     employees = cursor.fetchall()
@@ -1283,9 +1316,10 @@ async def show_all_employees(query):
     
     text = "👥 ВСЕ СОТРУДНИКИ\n\n"
     for emp in employees:
-        full_name, position, store, is_admin, is_super_admin = emp
+        full_name, position, store, is_admin, is_super_admin, can_request_admin = emp
         role = "⭐ Супер-админ" if is_super_admin else "👑 Админ" if is_admin else "👤 Сотрудник"
-        text += f"• {full_name}\n  {role} | {position} | {store}\n\n"
+        request_status = " ✅ может запросить админку" if can_request_admin and not (is_admin or is_super_admin) else ""
+        text += f"• {full_name}\n  {role} | {position} | {store}{request_status}\n\n"
     
     if len(text) > MAX_MESSAGE_LENGTH:
         for i in range(0, len(text), MAX_MESSAGE_LENGTH):
@@ -1306,7 +1340,7 @@ async def show_employees_by_store(query):
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     cursor.execute('''
-        SELECT store, full_name, position, is_admin, is_super_admin 
+        SELECT store, full_name, position, is_admin, is_super_admin, can_request_admin 
         FROM employees ORDER BY store, full_name
     ''')
     employees = cursor.fetchall()
@@ -1318,12 +1352,13 @@ async def show_employees_by_store(query):
     
     stores_dict = {}
     for emp in employees:
-        store, full_name, position, is_admin, is_super_admin = emp
+        store, full_name, position, is_admin, is_super_admin, can_request_admin = emp
         if store not in stores_dict:
             stores_dict[store] = []
         
         role = "⭐" if is_super_admin else "👑" if is_admin else "👤"
-        stores_dict[store].append(f"{role} {full_name} - {position}")
+        request_mark = " 📝" if can_request_admin and not (is_admin or is_super_admin) else ""
+        stores_dict[store].append(f"{role} {full_name} - {position}{request_mark}")
     
     text = "📊 СОТРУДНИКИ ПО МАГАЗИНАМ\n\n"
     for store, employees_list in stores_dict.items():
@@ -1345,56 +1380,6 @@ async def show_employees_by_store(query):
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
-
-async def show_export_menu_confirmed(query):
-    """Меню экспорта подтвержденных смен"""
-    stores = get_stores()
-    
-    keyboard = []
-    for store_name, address in stores:
-        keyboard.append([
-            InlineKeyboardButton(f"🏪 {store_name}", 
-                               callback_data=f"export_store_confirmed_{store_name}")
-        ])
-    
-    keyboard.append([
-        InlineKeyboardButton("📊 Все магазины", callback_data="export_store_confirmed_all")
-    ])
-    keyboard.append([
-        InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")
-    ])
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text(
-        "📥 ЭКСПОРТ CSV (ТОЛЬКО ПОДТВЕРЖДЕННЫЕ)\n\n"
-        "Выберите магазин:",
-        reply_markup=reply_markup
-    )
-
-async def show_export_menu_all(query):
-    """Меню экспорта всех смен"""
-    stores = get_stores()
-    
-    keyboard = []
-    for store_name, address in stores:
-        keyboard.append([
-            InlineKeyboardButton(f"🏪 {store_name}", 
-                               callback_data=f"export_store_all_{store_name}")
-        ])
-    
-    keyboard.append([
-        InlineKeyboardButton("📊 Все магазины", callback_data="export_store_all_all")
-    ])
-    keyboard.append([
-        InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")
-    ])
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text(
-        "📥 ЭКСПОРТ CSV (ВСЕ СМЕНЫ)\n\n"
-        "Выберите магазин:",
-        reply_markup=reply_markup
-    )
 
 async def show_period_selection(query):
     """Меню выбора периода"""
@@ -1604,9 +1589,6 @@ async def create_position(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     position_name = update.message.text.strip()
     
-    logger.info(f"🔥 create_position вызвана пользователем {user_id}")
-    logger.info(f"Введенное название должности: '{position_name}'")
-    
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     
@@ -1713,15 +1695,10 @@ async def delete_position(query, position_name):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
 
-# Функции для управления магазинами - ИСПРАВЛЕНО
+# Функции для управления магазинами
 async def create_store_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Получение названия магазина"""
-    user_id = update.effective_user.id
     store_name = update.message.text.strip()
-    
-    logger.info(f"🔥 create_store_name вызвана пользователем {user_id}")
-    logger.info(f"Введенное название магазина: '{store_name}'")
-    
     context.user_data['new_store_name'] = store_name
     
     await update.message.reply_text(
@@ -1735,10 +1712,6 @@ async def create_store_address(update: Update, context: ContextTypes.DEFAULT_TYP
     user_id = update.effective_user.id
     store_address = update.message.text.strip()
     store_name = context.user_data.get('new_store_name')
-    
-    logger.info(f"🔥 create_store_address вызвана пользователем {user_id}")
-    logger.info(f"Адрес магазина: '{store_address}'")
-    logger.info(f"Название магазина из user_data: '{store_name}'")
     
     if not store_name:
         await update.message.reply_text("❌ Ошибка создания. Начните заново.")
@@ -1763,7 +1736,6 @@ async def create_store_address(update: Update, context: ContextTypes.DEFAULT_TYP
     finally:
         conn.close()
     
-    # Возвращаемся в меню магазинов
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="admin_stores_menu")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
@@ -1771,7 +1743,6 @@ async def create_store_address(update: Update, context: ContextTypes.DEFAULT_TYP
         reply_markup=reply_markup
     )
     
-    # Очищаем временные данные
     context.user_data.pop('new_store_name', None)
     
     return ConversationHandler.END
@@ -1853,173 +1824,6 @@ async def delete_store(query, store_name):
     await query.edit_message_text(f"✅ Магазин '{store_name}' удален")
     
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="admin_stores_menu")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
-
-# Функции для экспорта CSV
-async def export_csv(query, store, confirmed_only=True):
-    """Экспорт данных в CSV"""
-    conn = sqlite3.connect('timesheet.db')
-    cursor = conn.cursor()
-    
-    if store == "all":
-        if confirmed_only:
-            cursor.execute('''
-                SELECT e.full_name, e.position, e.store, t.date, t.check_in, t.check_out, 
-                       t.hours, t.notes, t.confirmed
-                FROM timesheet t
-                JOIN employees e ON t.user_id = e.user_id
-                WHERE t.status = 'completed' AND t.confirmed = 1
-                ORDER BY t.date DESC, e.store
-            ''')
-        else:
-            cursor.execute('''
-                SELECT e.full_name, e.position, e.store, t.date, t.check_in, t.check_out, 
-                       t.hours, t.notes, t.confirmed
-                FROM timesheet t
-                JOIN employees e ON t.user_id = e.user_id
-                WHERE t.status = 'completed'
-                ORDER BY t.date DESC, e.store
-            ''')
-    else:
-        if confirmed_only:
-            cursor.execute('''
-                SELECT e.full_name, e.position, e.store, t.date, t.check_in, t.check_out, 
-                       t.hours, t.notes, t.confirmed
-                FROM timesheet t
-                JOIN employees e ON t.user_id = e.user_id
-                WHERE e.store = ? AND t.status = 'completed' AND t.confirmed = 1
-                ORDER BY t.date DESC
-            ''', (store,))
-        else:
-            cursor.execute('''
-                SELECT e.full_name, e.position, e.store, t.date, t.check_in, t.check_out, 
-                       t.hours, t.notes, t.confirmed
-                FROM timesheet t
-                JOIN employees e ON t.user_id = e.user_id
-                WHERE e.store = ? AND t.status = 'completed'
-                ORDER BY t.date DESC
-            ''', (store,))
-    
-    records = cursor.fetchall()
-    conn.close()
-    
-    if not records:
-        await query.edit_message_text("📊 Нет данных для экспорта")
-        return
-    
-    output = io.StringIO()
-    writer = csv.writer(output, delimiter=';', quoting=csv.QUOTE_MINIMAL)
-    
-    writer.writerow([
-        'Сотрудник', 'Должность', 'Магазин', 'Дата', 'Начало', 'Конец',
-        'Часов', 'Примечания', 'Подтверждено'
-    ])
-    
-    for record in records:
-        full_name, position, store_name, date_str, checkin, checkout, hours, notes, confirmed = record
-        
-        checkin_time = format_time_utc8(datetime.fromisoformat(checkin)) if checkin else "-"
-        checkout_time = format_time_utc8(datetime.fromisoformat(checkout)) if checkout else "-"
-        confirmed_str = "Да" if confirmed else "Нет"
-        hours_str = str(hours).replace('.', ',')
-        
-        writer.writerow([
-            full_name, position, store_name, date_str, checkin_time, checkout_time,
-            hours_str, notes or "", confirmed_str
-        ])
-    
-    csv_data = output.getvalue().encode('utf-8-sig')
-    output.close()
-    
-    today = get_today_date_utc8()
-    store_part = "all" if store == "all" else store
-    confirmed_part = "confirmed" if confirmed_only else "all"
-    filename = f"timesheet_{store_part}_{confirmed_part}_{today}.csv"
-    
-    await query.message.reply_document(
-        document=io.BytesIO(csv_data),
-        filename=filename,
-        caption=f"📊 Экспорт данных{' (только подтвержденные)' if confirmed_only else ' (все смены)'}"
-    )
-    
-    await query.edit_message_text("✅ Экспорт завершен!")
-    
-    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
-
-async def export_csv_period(query, days, confirmed_only=True):
-    """Экспорт данных за период"""
-    end_date = get_today_date_utc8()
-    start_date = (datetime.now(TIMEZONE) - timedelta(days=days-1)).date().isoformat()
-    
-    conn = sqlite3.connect('timesheet.db')
-    cursor = conn.cursor()
-    
-    if confirmed_only:
-        cursor.execute('''
-            SELECT e.full_name, e.position, e.store, t.date, t.check_in, t.check_out, 
-                   t.hours, t.notes, t.confirmed
-            FROM timesheet t
-            JOIN employees e ON t.user_id = e.user_id
-            WHERE t.date BETWEEN ? AND ? AND t.status = 'completed' AND t.confirmed = 1
-            ORDER BY t.date DESC, e.store
-        ''', (start_date, end_date))
-    else:
-        cursor.execute('''
-            SELECT e.full_name, e.position, e.store, t.date, t.check_in, t.check_out, 
-                   t.hours, t.notes, t.confirmed
-            FROM timesheet t
-            JOIN employees e ON t.user_id = e.user_id
-            WHERE t.date BETWEEN ? AND ? AND t.status = 'completed'
-            ORDER BY t.date DESC, e.store
-        ''', (start_date, end_date))
-    
-    records = cursor.fetchall()
-    conn.close()
-    
-    if not records:
-        period_text = f"с {start_date} по {end_date}"
-        await query.edit_message_text(f"📊 Нет данных за период {period_text}")
-        return
-    
-    output = io.StringIO()
-    writer = csv.writer(output, delimiter=';', quoting=csv.QUOTE_MINIMAL)
-    
-    writer.writerow([
-        'Сотрудник', 'Должность', 'Магазин', 'Дата', 'Начало', 'Конец',
-        'Часов', 'Примечания', 'Подтверждено'
-    ])
-    
-    for record in records:
-        full_name, position, store_name, date_str, checkin, checkout, hours, notes, confirmed = record
-        
-        checkin_time = format_time_utc8(datetime.fromisoformat(checkin)) if checkin else "-"
-        checkout_time = format_time_utc8(datetime.fromisoformat(checkout)) if checkout else "-"
-        confirmed_str = "Да" if confirmed else "Нет"
-        hours_str = str(hours).replace('.', ',')
-        
-        writer.writerow([
-            full_name, position, store_name, date_str, checkin_time, checkout_time,
-            hours_str, notes or "", confirmed_str
-        ])
-    
-    csv_data = output.getvalue().encode('utf-8-sig')
-    output.close()
-    
-    confirmed_part = "confirmed" if confirmed_only else "all"
-    filename = f"timesheet_period_{start_date}_to_{end_date}_{confirmed_part}.csv"
-    
-    await query.message.reply_document(
-        document=io.BytesIO(csv_data),
-        filename=filename,
-        caption=f"📊 Экспорт за период {start_date} - {end_date}"
-    )
-    
-    await query.edit_message_text("✅ Экспорт завершен!")
-    
-    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
 
@@ -2705,8 +2509,10 @@ async def reject_delete_request(query, request_id):
 
 # Функции для заявок на админа
 async def handle_admin_request(query, context, user_id, user_info):
-    """Обработка заявки на становление администратором"""
+    """Обработка заявки на становление администратором из callback"""
     full_name = user_info[0] if user_info else query.from_user.full_name
+    position = user_info[1] if user_info and len(user_info) > 1 else "Не указана"
+    store = user_info[2] if user_info and len(user_info) > 2 else "Не указан"
     
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
@@ -2726,9 +2532,9 @@ async def handle_admin_request(query, context, user_id, user_info):
     
     cursor.execute('''
         INSERT INTO admin_requests 
-        (request_date, user_id, user_name, status)
-        VALUES (?, ?, ?, ?)
-    ''', (get_today_date_utc8(), user_id, full_name, 'pending'))
+        (request_date, user_id, user_name, user_position, user_store, status)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (get_today_date_utc8(), user_id, full_name, position, store, 'pending'))
     
     conn.commit()
     conn.close()
@@ -2745,6 +2551,8 @@ async def handle_admin_request(query, context, user_id, user_info):
                 admin_id,
                 f"👑 Новая заявка на становление администратором!\n\n"
                 f"От: {full_name}\n"
+                f"Должность: {position}\n"
+                f"Магазин: {store}\n"
                 f"ID: {user_id}\n\n"
                 f"Используйте /admin для рассмотрения заявки."
             )
@@ -2756,7 +2564,7 @@ async def show_admin_requests(query):
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     cursor.execute('''
-        SELECT id, request_date, user_name, user_id, status
+        SELECT id, request_date, user_name, user_position, user_store, user_id, status
         FROM admin_requests
         ORDER BY 
             CASE status 
@@ -2780,7 +2588,7 @@ async def show_admin_requests(query):
     other_text = ""
     
     for req in requests:
-        req_id, req_date, user_name, user_id, status = req
+        req_id, req_date, user_name, user_position, user_store, user_id, status = req
         
         status_emoji = {
             'pending': '⏳',
@@ -2796,7 +2604,10 @@ async def show_admin_requests(query):
         
         req_text = f"{status_emoji} Заявка #{req_id}\n"
         req_text += f"📅 {req_date}\n"
-        req_text += f"👤 {user_name} (ID: {user_id})\n"
+        req_text += f"👤 {user_name}\n"
+        req_text += f"📋 Должность: {user_position}\n"
+        req_text += f"🏪 Магазин: {user_store}\n"
+        req_text += f"🆔 ID: {user_id}\n"
         req_text += f"📊 Статус: {status_text}\n\n"
         
         if status == 'pending':
@@ -2832,7 +2643,7 @@ async def approve_admin_request(query, request_id):
     cursor = conn.cursor()
     
     cursor.execute('''
-        SELECT user_id, user_name
+        SELECT user_id, user_name, user_position, user_store
         FROM admin_requests
         WHERE id = ? AND status = 'pending'
     ''', (request_id,))
@@ -2844,24 +2655,26 @@ async def approve_admin_request(query, request_id):
         conn.close()
         return
     
-    user_id, user_name = request
+    user_id, user_name, user_position, user_store = request
     
     cursor.execute("SELECT full_name FROM employees WHERE user_id = ?", (user_id,))
     employee = cursor.fetchone()
     
     if employee:
+        # Пользователь уже зарегистрирован - делаем его админом
         cursor.execute('''
             UPDATE employees 
             SET is_admin = 1 
             WHERE user_id = ?
         ''', (user_id,))
     else:
+        # Новый пользователь - создаем запись
         cursor.execute('''
             INSERT INTO employees 
-            (user_id, full_name, position, store, reg_date, is_admin, is_super_admin)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (user_id, user_name, "Администратор", "Главный офис", 
-              get_today_date_utc8(), 1, 0))
+            (user_id, full_name, position, store, reg_date, is_admin, is_super_admin, can_request_admin)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (user_id, user_name, user_position, user_store, 
+              get_today_date_utc8(), 1, 0, 0))
     
     cursor.execute('''
         UPDATE admin_requests 
@@ -3149,7 +2962,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return ConversationHandler.END
 
-# ИСПРАВЛЕНО: Основная функция запуска с правильным порядком обработчиков
+# Основная функция запуска
 async def main_async():
     """Основная асинхронная функция"""
     try:
@@ -3159,7 +2972,7 @@ async def main_async():
         
         app = Application.builder().token(BOT_TOKEN).build()
         
-        # ВАЖНО: СНАЧАЛА добавляем все ConversationHandler
+        # ВАЖНО: СНАЧАЛА добавляем ConversationHandler
         reg_conv_handler = ConversationHandler(
             entry_points=[
                 CommandHandler("start", start),
@@ -3191,14 +3004,27 @@ async def main_async():
         )
         app.add_handler(reg_conv_handler)
         
+        # ПОТОМ остальные обработчики команд
+        app.add_handler(CommandHandler("checkin", checkin))
+        app.add_handler(CommandHandler("checkout", checkout))
+        app.add_handler(CommandHandler("timesheet", timesheet))
+        app.add_handler(CommandHandler("stats", stats))
+        app.add_handler(CommandHandler("admin", admin_panel))
+        app.add_handler(CommandHandler("cancel", cancel_registration))
+        
+        # Обработчик текстовых сообщений (для кнопки запроса админки)
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+        
+        # ВРЕМЕННО для отладки (можно удалить позже)
+        # app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, debug_message), group=0)
+        
+        # Остальные ConversationHandler
         create_position_conv = ConversationHandler(
             entry_points=[CallbackQueryHandler(button_callback, pattern="^create_position$")],
             states={
                 CREATE_POSITION_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_position)],
             },
             fallbacks=[CommandHandler("cancel", cancel)],
-            name="create_position_conversation",
-            persistent=False,
             allow_reentry=True
         )
         app.add_handler(create_position_conv)
@@ -3210,8 +3036,6 @@ async def main_async():
                 CREATE_STORE_ADDRESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_store_address)],
             },
             fallbacks=[CommandHandler("cancel", cancel)],
-            name="create_store_conversation",
-            persistent=False,
             allow_reentry=True
         )
         app.add_handler(create_store_conv)
@@ -3223,24 +3047,11 @@ async def main_async():
                 CUSTOM_PERIOD_END: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_custom_period_end)],
             },
             fallbacks=[CommandHandler("cancel", cancel)],
-            name="custom_period_conversation",
-            persistent=False,
             allow_reentry=True
         )
         app.add_handler(custom_period_conv)
         
-        # ПОТОМ добавляем обработчики команд
-        app.add_handler(CommandHandler("checkin", checkin))
-        app.add_handler(CommandHandler("checkout", checkout))
-        app.add_handler(CommandHandler("timesheet", timesheet))
-        app.add_handler(CommandHandler("stats", stats))
-        app.add_handler(CommandHandler("admin", admin_panel))
-        app.add_handler(CommandHandler("cancel", cancel_registration))
-        
-        # ПОТОМ добавляем отладочный обработчик с более низким приоритетом
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, debug_message), group=1)
-        
-        # ОСНОВНОЙ обработчик callback-запросов - ПОСЛЕДНИМ
+        # Основной обработчик callback-запросов - ПОСЛЕДНИМ
         app.add_handler(CallbackQueryHandler(button_callback))
         
         logger.info("🚀 Bot started successfully")
