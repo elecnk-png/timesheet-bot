@@ -1,9 +1,13 @@
 import os
 import logging
 import asyncio
+import nest_asyncio
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
+
+# Применяем nest_asyncio ДО всего остального
+nest_asyncio.apply()
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -18,16 +22,30 @@ logger = logging.getLogger(__name__)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Простой обработчик start"""
-    logger.info(f"Получена команда /start от пользователя {update.effective_user.id}")
+    logger.info(f"✅ Получена команда /start от {update.effective_user.id}")
     await update.message.reply_text(
         f"👋 Привет, {update.effective_user.first_name}!\n"
-        f"Бот работает! 🎉\n\n"
+        f"✅ Бот работает!\n\n"
         f"Ваш ID: {update.effective_user.id}"
     )
+
+async def delete_webhook():
+    """Удаление webhook"""
+    try:
+        app = Application.builder().token(BOT_TOKEN).build()
+        await app.bot.delete_webhook(drop_pending_updates=True)
+        logger.info("✅ Webhook удален")
+        await app.shutdown()
+    except Exception as e:
+        logger.error(f"❌ Ошибка при удалении webhook: {e}")
 
 async def main():
     """Запуск бота"""
     try:
+        # Удаляем webhook
+        await delete_webhook()
+        await asyncio.sleep(1)
+        
         # Создаем приложение
         app = Application.builder().token(BOT_TOKEN).build()
         
