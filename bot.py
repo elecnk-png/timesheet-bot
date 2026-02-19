@@ -283,22 +283,18 @@ async def cancel_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     return ConversationHandler.END
 
-# ВРЕМЕННО: функция для отладки сообщений
+# ИСПРАВЛЕНО: функция для отладки сообщений (пропускает сообщения дальше)
 async def debug_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Отладка всех сообщений"""
+    """Отладка всех сообщений (пропускает дальше)"""
     user_id = update.effective_user.id
     text = update.message.text
     logger.info(f"🔥🔥🔥 ПОЛУЧЕНО СООБЩЕНИЕ от {user_id}: '{text}'")
     logger.info(f"Текущий user_data: {context.user_data}")
     
-    # Проверяем, есть ли активный ConversationHandler
-    if context.user_data.get('conversation_state'):
-        logger.info(f"Активное состояние: {context.user_data['conversation_state']}")
-    
-    # Пропускаем сообщение дальше
+    # ВАЖНО: возвращаем None, чтобы сообщение пошло к следующим обработчикам
     return
 
-# ИСПРАВЛЕНО: Функция для ввода имени при регистрации
+# Функция для ввода имени при регистрации
 async def enter_full_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Получение ФИО от пользователя"""
     user_id = update.effective_user.id
@@ -360,7 +356,7 @@ async def delete_webhook():
     except Exception as e:
         logger.error(f"❌ Ошибка при удалении webhook: {e}")
 
-# ИСПРАВЛЕНО: Обновленная функция start
+# Обновленная функция start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start - регистрация или главное меню"""
     user = update.effective_user
@@ -706,7 +702,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
-# ИСПРАВЛЕНО: Основной обработчик callback-запросов с отладкой
+# Основной обработчик callback-запросов
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка нажатий на инлайн кнопки"""
     query = update.callback_query
@@ -946,6 +942,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             "✏️ Введите название новой должности:"
         )
+        logger.info("🔥 Возвращаем CREATE_POSITION_NAME")
         return CREATE_POSITION_NAME
     
     elif callback_data == "list_positions":
@@ -974,6 +971,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             "✏️ Введите название магазина:"
         )
+        logger.info("🔥 Возвращаем CREATE_STORE_NAME")
         return CREATE_STORE_NAME
     
     elif callback_data == "list_stores":
@@ -1606,6 +1604,9 @@ async def create_position(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     position_name = update.message.text.strip()
     
+    logger.info(f"🔥 create_position вызвана пользователем {user_id}")
+    logger.info(f"Введенное название должности: '{position_name}'")
+    
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     
@@ -1712,10 +1713,15 @@ async def delete_position(query, position_name):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
 
-# Функции для управления магазинами
+# Функции для управления магазинами - ИСПРАВЛЕНО
 async def create_store_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Получение названия магазина"""
+    user_id = update.effective_user.id
     store_name = update.message.text.strip()
+    
+    logger.info(f"🔥 create_store_name вызвана пользователем {user_id}")
+    logger.info(f"Введенное название магазина: '{store_name}'")
+    
     context.user_data['new_store_name'] = store_name
     
     await update.message.reply_text(
@@ -1729,6 +1735,10 @@ async def create_store_address(update: Update, context: ContextTypes.DEFAULT_TYP
     user_id = update.effective_user.id
     store_address = update.message.text.strip()
     store_name = context.user_data.get('new_store_name')
+    
+    logger.info(f"🔥 create_store_address вызвана пользователем {user_id}")
+    logger.info(f"Адрес магазина: '{store_address}'")
+    logger.info(f"Название магазина из user_data: '{store_name}'")
     
     if not store_name:
         await update.message.reply_text("❌ Ошибка создания. Начните заново.")
@@ -1753,6 +1763,7 @@ async def create_store_address(update: Update, context: ContextTypes.DEFAULT_TYP
     finally:
         conn.close()
     
+    # Возвращаемся в меню магазинов
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="admin_stores_menu")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
@@ -1760,6 +1771,7 @@ async def create_store_address(update: Update, context: ContextTypes.DEFAULT_TYP
         reply_markup=reply_markup
     )
     
+    # Очищаем временные данные
     context.user_data.pop('new_store_name', None)
     
     return ConversationHandler.END
@@ -3137,7 +3149,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return ConversationHandler.END
 
-# Основная функция запуска
+# ИСПРАВЛЕНО: Основная функция запуска с правильным порядком обработчиков
 async def main_async():
     """Основная асинхронная функция"""
     try:
@@ -3147,7 +3159,7 @@ async def main_async():
         
         app = Application.builder().token(BOT_TOKEN).build()
         
-        # ВАЖНО: СНАЧАЛА добавляем ConversationHandler
+        # ВАЖНО: СНАЧАЛА добавляем все ConversationHandler
         reg_conv_handler = ConversationHandler(
             entry_points=[
                 CommandHandler("start", start),
@@ -3179,24 +3191,14 @@ async def main_async():
         )
         app.add_handler(reg_conv_handler)
         
-        # ПОТОМ остальные обработчики команд
-        app.add_handler(CommandHandler("checkin", checkin))
-        app.add_handler(CommandHandler("checkout", checkout))
-        app.add_handler(CommandHandler("timesheet", timesheet))
-        app.add_handler(CommandHandler("stats", stats))
-        app.add_handler(CommandHandler("admin", admin_panel))
-        app.add_handler(CommandHandler("cancel", cancel_registration))
-        
-        # ВРЕМЕННО для отладки (можно удалить позже)
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, debug_message), group=0)
-        
-        # Остальные ConversationHandler
         create_position_conv = ConversationHandler(
             entry_points=[CallbackQueryHandler(button_callback, pattern="^create_position$")],
             states={
                 CREATE_POSITION_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_position)],
             },
             fallbacks=[CommandHandler("cancel", cancel)],
+            name="create_position_conversation",
+            persistent=False,
             allow_reentry=True
         )
         app.add_handler(create_position_conv)
@@ -3208,6 +3210,8 @@ async def main_async():
                 CREATE_STORE_ADDRESS: [MessageHandler(filters.TEXT & ~filters.COMMAND, create_store_address)],
             },
             fallbacks=[CommandHandler("cancel", cancel)],
+            name="create_store_conversation",
+            persistent=False,
             allow_reentry=True
         )
         app.add_handler(create_store_conv)
@@ -3219,11 +3223,24 @@ async def main_async():
                 CUSTOM_PERIOD_END: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_custom_period_end)],
             },
             fallbacks=[CommandHandler("cancel", cancel)],
+            name="custom_period_conversation",
+            persistent=False,
             allow_reentry=True
         )
         app.add_handler(custom_period_conv)
         
-        # Основной обработчик callback-запросов - ПОСЛЕДНИМ
+        # ПОТОМ добавляем обработчики команд
+        app.add_handler(CommandHandler("checkin", checkin))
+        app.add_handler(CommandHandler("checkout", checkout))
+        app.add_handler(CommandHandler("timesheet", timesheet))
+        app.add_handler(CommandHandler("stats", stats))
+        app.add_handler(CommandHandler("admin", admin_panel))
+        app.add_handler(CommandHandler("cancel", cancel_registration))
+        
+        # ПОТОМ добавляем отладочный обработчик с более низким приоритетом
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, debug_message), group=1)
+        
+        # ОСНОВНОЙ обработчик callback-запросов - ПОСЛЕДНИМ
         app.add_handler(CallbackQueryHandler(button_callback))
         
         logger.info("🚀 Bot started successfully")
