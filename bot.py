@@ -1,11 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-"""
-Telegram Bot для табеля учета рабочего времени сотрудников
-Часовой пояс: UTC+8 (Asia/Singapore)
-"""
-
 import os
 import logging
 import sqlite3
