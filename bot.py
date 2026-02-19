@@ -669,7 +669,12 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(user_id)
     is_super_admin = user[4] if user else 0
     
+    # Добавляем пункты меню обычного пользователя
     keyboard = [
+        [InlineKeyboardButton("✅ /checkin - начало смены", callback_data="admin_checkin")],
+        [InlineKeyboardButton("✅ /checkout - конец смены", callback_data="admin_checkout")],
+        [InlineKeyboardButton("📊 /timesheet - мой табель", callback_data="admin_timesheet")],
+        [InlineKeyboardButton("📈 /stats - моя статистика", callback_data="admin_stats")],
         [InlineKeyboardButton("👥 Все сотрудники", callback_data="admin_list")],
         [InlineKeyboardButton("📊 По магазинам", callback_data="admin_by_store")],
         [InlineKeyboardButton("📅 Выбрать период", callback_data="period_selection")],
@@ -879,6 +884,19 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif callback_data == "request_admin":
         await handle_admin_request(query, context, user_id, user)
     
+    # ИСПРАВЛЕНО: Добавлены обработчики для команд обычного пользователя в админке
+    elif callback_data == "admin_checkin":
+        await checkin(update, context)
+    
+    elif callback_data == "admin_checkout":
+        await checkout(update, context)
+    
+    elif callback_data == "admin_timesheet":
+        await timesheet(update, context)
+    
+    elif callback_data == "admin_stats":
+        await stats(update, context)
+    
     elif callback_data == "admin_list":
         if not (is_admin or is_super_admin):
             await query.edit_message_text("❌ Недостаточно прав")
@@ -891,11 +909,52 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         await show_employees_by_store(query)
     
+    # ИСПРАВЛЕНО: Обработка выбора периода
     elif callback_data == "period_selection":
         if not (is_admin or is_super_admin):
             await query.edit_message_text("❌ Недостаточно прав")
             return
         await show_period_selection(query)
+    
+    elif callback_data.startswith("period_"):
+        if not (is_admin or is_super_admin):
+            await query.edit_message_text("❌ Недостаточно прав")
+            return
+        
+        period = callback_data[7:]
+        if period == "custom":
+            await query.edit_message_text(
+                "📅 Введите начальную дату в формате ГГГГ-ММ-ДД:"
+            )
+            return CUSTOM_PERIOD_START
+        else:
+            days = 0
+            if period == "7":
+                days = 7
+            elif period == "14":
+                days = 14
+            elif period == "30":
+                days = 30
+            elif period == "90":
+                days = 90
+            elif period == "all":
+                days = 36500
+            
+            context.user_data['period_days'] = days
+            await show_export_options(query, days)
+    
+    # ИСПРАВЛЕНО: Обработка экспорта
+    elif callback_data == "export_confirmed":
+        if not (is_admin or is_super_admin):
+            return
+        days = context.user_data.get('period_days', 30)
+        await export_csv_period(query, days, confirmed_only=True)
+    
+    elif callback_data == "export_all":
+        if not (is_admin or is_super_admin):
+            return
+        days = context.user_data.get('period_days', 30)
+        await export_csv_period(query, days, confirmed_only=False)
     
     elif callback_data == "admin_store_stats":
         if not (is_admin or is_super_admin):
@@ -986,19 +1045,21 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         store_name = callback_data[17:]
         await delete_store(query, store_name)
     
-    elif callback_data.startswith("confirm_today"):
+    elif callback_data == "confirm_today":
         if not (is_admin or is_super_admin):
             return
         await show_unconfirmed_today(query)
     
-    elif callback_data.startswith("confirm_period"):
+    elif callback_data == "confirm_period":
         if not (is_admin or is_super_admin):
             return
-        if callback_data == "confirm_period":
-            await show_period_confirm_menu(query)
-        else:
-            days = int(callback_data[14:])
-            await show_unconfirmed_period(query, days)
+        await show_period_confirm_menu(query)
+    
+    elif callback_data.startswith("confirm_period_"):
+        if not (is_admin or is_super_admin):
+            return
+        days = int(callback_data[14:])
+        await show_unconfirmed_period(query, days)
     
     elif callback_data == "confirm_all_today":
         if not (is_admin or is_super_admin):
@@ -1131,7 +1192,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         await show_add_admin_menu(query)
     
-    # Обработчик для назначения администратором
+    # ИСПРАВЛЕНО: Обработчик для назначения администратором
     elif callback_data.startswith("make_admin_"):
         if not is_super_admin:
             await query.edit_message_text("❌ Недостаточно прав")
@@ -1183,7 +1244,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
 
-# ИСПРАВЛЕНО: Обработчик текстовых сообщений с проверкой состояния
+# Обработчик текстовых сообщений
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка текстовых сообщений"""
     text = update.message.text
@@ -1191,17 +1252,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     logger.info(f"Получено сообщение от {user_id}: {text}")
     
-    # Проверяем, не находится ли пользователь в активном ConversationHandler
-    # Это важно для создания должностей и магазинов
-    if context.user_data.get('conversation_state') is not None:
-        logger.info(f"Пользователь в состоянии {context.user_data['conversation_state']}, пропускаем сообщение для ConversationHandler")
-        return
-    
-    # Проверяем, не является ли сообщение командой
-    if text.startswith('/'):
-        return
-    
-    # Обрабатываем только специальную кнопку
     if text == "👑 Запросить права администратора":
         user = get_user(user_id)
         if not user:
@@ -1278,6 +1328,10 @@ async def handle_admin_request_from_message(update: Update, context: ContextType
 async def show_admin_panel(query):
     """Показать панель администратора"""
     keyboard = [
+        [InlineKeyboardButton("✅ /checkin - начало смены", callback_data="admin_checkin")],
+        [InlineKeyboardButton("✅ /checkout - конец смены", callback_data="admin_checkout")],
+        [InlineKeyboardButton("📊 /timesheet - мой табель", callback_data="admin_timesheet")],
+        [InlineKeyboardButton("📈 /stats - моя статистика", callback_data="admin_stats")],
         [InlineKeyboardButton("👥 Все сотрудники", callback_data="admin_list")],
         [InlineKeyboardButton("📊 По магазинам", callback_data="admin_by_store")],
         [InlineKeyboardButton("📅 Выбрать период", callback_data="period_selection")],
@@ -1585,8 +1639,6 @@ async def create_position(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     position_name = update.message.text.strip()
     
-    logger.info(f"Создание должности: {position_name} от пользователя {user_id}")
-    
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     
@@ -1597,10 +1649,8 @@ async def create_position(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ''', (position_name, user_id, get_today_date_utc8()))
         conn.commit()
         await update.message.reply_text(f"✅ Должность '{position_name}' создана!")
-        logger.info(f"Должность '{position_name}' успешно создана")
     except sqlite3.IntegrityError:
         await update.message.reply_text(f"❌ Должность '{position_name}' уже существует")
-        logger.warning(f"Должность '{position_name}' уже существует")
     finally:
         conn.close()
     
@@ -1701,8 +1751,6 @@ async def create_store_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     store_name = update.message.text.strip()
     context.user_data['new_store_name'] = store_name
     
-    logger.info(f"Получено название магазина: {store_name}")
-    
     await update.message.reply_text(
         f"🏪 Название: {store_name}\n\n"
         f"✏️ Теперь введите адрес магазина:"
@@ -1714,8 +1762,6 @@ async def create_store_address(update: Update, context: ContextTypes.DEFAULT_TYP
     user_id = update.effective_user.id
     store_address = update.message.text.strip()
     store_name = context.user_data.get('new_store_name')
-    
-    logger.info(f"Создание магазина: {store_name}, адрес: {store_address} от пользователя {user_id}")
     
     if not store_name:
         await update.message.reply_text("❌ Ошибка создания. Начните заново.")
@@ -1735,10 +1781,8 @@ async def create_store_address(update: Update, context: ContextTypes.DEFAULT_TYP
             f"Название: {store_name}\n"
             f"Адрес: {store_address}"
         )
-        logger.info(f"Магазин '{store_name}' успешно создан")
     except sqlite3.IntegrityError:
         await update.message.reply_text(f"❌ Магазин '{store_name}' уже существует")
-        logger.warning(f"Магазин '{store_name}' уже существует")
     finally:
         conn.close()
     
@@ -1830,6 +1874,81 @@ async def delete_store(query, store_name):
     await query.edit_message_text(f"✅ Магазин '{store_name}' удален")
     
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="admin_stores_menu")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
+
+# Функции для экспорта CSV
+async def export_csv_period(query, days, confirmed_only=True):
+    """Экспорт данных за период"""
+    end_date = get_today_date_utc8()
+    start_date = (datetime.now(TIMEZONE) - timedelta(days=days-1)).date().isoformat()
+    
+    conn = sqlite3.connect('timesheet.db')
+    cursor = conn.cursor()
+    
+    if confirmed_only:
+        cursor.execute('''
+            SELECT e.full_name, e.position, e.store, t.date, t.check_in, t.check_out, 
+                   t.hours, t.notes, t.confirmed
+            FROM timesheet t
+            JOIN employees e ON t.user_id = e.user_id
+            WHERE t.date BETWEEN ? AND ? AND t.status = 'completed' AND t.confirmed = 1
+            ORDER BY t.date DESC, e.store
+        ''', (start_date, end_date))
+    else:
+        cursor.execute('''
+            SELECT e.full_name, e.position, e.store, t.date, t.check_in, t.check_out, 
+                   t.hours, t.notes, t.confirmed
+            FROM timesheet t
+            JOIN employees e ON t.user_id = e.user_id
+            WHERE t.date BETWEEN ? AND ? AND t.status = 'completed'
+            ORDER BY t.date DESC, e.store
+        ''', (start_date, end_date))
+    
+    records = cursor.fetchall()
+    conn.close()
+    
+    if not records:
+        period_text = f"с {start_date} по {end_date}"
+        await query.edit_message_text(f"📊 Нет данных за период {period_text}")
+        return
+    
+    output = io.StringIO()
+    writer = csv.writer(output, delimiter=';', quoting=csv.QUOTE_MINIMAL)
+    
+    writer.writerow([
+        'Сотрудник', 'Должность', 'Магазин', 'Дата', 'Начало', 'Конец',
+        'Часов', 'Примечания', 'Подтверждено'
+    ])
+    
+    for record in records:
+        full_name, position, store_name, date_str, checkin, checkout, hours, notes, confirmed = record
+        
+        checkin_time = format_time_utc8(datetime.fromisoformat(checkin)) if checkin else "-"
+        checkout_time = format_time_utc8(datetime.fromisoformat(checkout)) if checkout else "-"
+        confirmed_str = "Да" if confirmed else "Нет"
+        hours_str = str(hours).replace('.', ',')
+        
+        writer.writerow([
+            full_name, position, store_name, date_str, checkin_time, checkout_time,
+            hours_str, notes or "", confirmed_str
+        ])
+    
+    csv_data = output.getvalue().encode('utf-8-sig')
+    output.close()
+    
+    confirmed_part = "confirmed" if confirmed_only else "all"
+    filename = f"timesheet_period_{start_date}_to_{end_date}_{confirmed_part}.csv"
+    
+    await query.message.reply_document(
+        document=io.BytesIO(csv_data),
+        filename=filename,
+        caption=f"📊 Экспорт за период {start_date} - {end_date}"
+    )
+    
+    await query.edit_message_text("✅ Экспорт завершен!")
+    
+    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
 
@@ -3018,7 +3137,10 @@ async def main_async():
         app.add_handler(CommandHandler("admin", admin_panel))
         app.add_handler(CommandHandler("cancel", cancel_registration))
         
-        # Остальные ConversationHandler (они должны быть ДО общего обработчика сообщений)
+        # Обработчик текстовых сообщений (для кнопки запроса админки)
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+        
+        # Остальные ConversationHandler
         create_position_conv = ConversationHandler(
             entry_points=[CallbackQueryHandler(button_callback, pattern="^create_position$")],
             states={
@@ -3050,9 +3172,6 @@ async def main_async():
             allow_reentry=True
         )
         app.add_handler(custom_period_conv)
-        
-        # Обработчик текстовых сообщений (для кнопки запроса админки) - ПОСЛЕ ВСЕХ ConversationHandler
-        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
         
         # Основной обработчик callback-запросов - ПОСЛЕДНИМ
         app.add_handler(CallbackQueryHandler(button_callback))
