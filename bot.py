@@ -26,8 +26,6 @@ BOT_TOKEN = os.getenv('BOT_TOKEN')
 
 # Настройка часового пояса UTC+8
 TIMEZONE = pytz.timezone('Asia/Singapore')
-# Альтернативный вариант с zoneinfo:
-# TIMEZONE = ZoneInfo("Asia/Singapore")
 
 # Настройка логирования
 logging.basicConfig(
@@ -42,11 +40,11 @@ logger = logging.getLogger(__name__)
 
 # Состояния для ConversationHandler
 (
-    SELECT_POSITION, SELECT_STORE, CREATE_POSITION_NAME,
+    SELECT_POSITION, SELECT_STORE, ENTER_FULL_NAME, CREATE_POSITION_NAME,
     CREATE_STORE_NAME, CREATE_STORE_ADDRESS, CUSTOM_PERIOD_START,
     CUSTOM_PERIOD_END, DELETE_EMPLOYEE_REQUEST, DELETE_STORE_REQUEST,
     ASSIGN_SUPER_ADMIN_SELECT
-) = range(10)
+) = range(11)
 
 # Константы
 MAX_MESSAGE_LENGTH = 4000
@@ -270,7 +268,7 @@ def get_super_admins() -> List[Tuple[int, str]]:
     conn.close()
     return result
 
-# ИСПРАВЛЕНИЕ 1: Функция для отмены регистрации
+# Функция для отмены регистрации
 async def cancel_registration(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отмена регистрации"""
     await update.message.reply_text(
@@ -278,14 +276,47 @@ async def cancel_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     return ConversationHandler.END
 
+# Функция для ввода имени при регистрации
+async def enter_full_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Получение ФИО от пользователя"""
+    full_name = update.message.text.strip()
+    
+    if len(full_name) < 2:
+        await update.message.reply_text(
+            "❌ Имя слишком короткое. Пожалуйста, введите ваше ФИО (минимум 2 символа):"
+        )
+        return ENTER_FULL_NAME
+    
+    # Сохраняем имя
+    context.user_data['full_name'] = full_name
+    
+    # Показываем должности
+    positions = get_positions()
+    if not positions:
+        await update.message.reply_text(
+            "❌ В системе нет должностей. Обратитесь к администратору."
+        )
+        return ConversationHandler.END
+    
+    keyboard = []
+    for pos in positions:
+        keyboard.append([InlineKeyboardButton(pos, callback_data=f"reg_pos_{pos}")])
+    
+    keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel_registration")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        f"👤 Ваше имя: {full_name}\n\n"
+        f"📝 Теперь выберите вашу должность:",
+        reply_markup=reply_markup
+    )
+    return SELECT_POSITION
+
 # Функции для удаления webhook
 async def delete_webhook():
     """Удаление webhook перед запуском polling"""
     try:
-        # Создаем временное приложение только для удаления webhook
         async with Application.builder().token(BOT_TOKEN).build() as app:
-            # Удаляем webhook и параметр drop_pending_updates=True говорит Telegram 
-            # не присылать обновления, которые были получены, пока бот был офлайн
             result = await app.bot.delete_webhook(drop_pending_updates=True)
             if result:
                 logger.info("✅ Webhook успешно удален, ожидающие обновления сброшены.")
@@ -294,7 +325,7 @@ async def delete_webhook():
     except Exception as e:
         logger.error(f"❌ Ошибка при удалении webhook: {e}")
 
-# ИСПРАВЛЕНИЕ 2: Обновленная функция start
+# Обновленная функция start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start - регистрация или главное меню"""
     user = update.effective_user
@@ -315,24 +346,31 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if employee:
         # Пользователь уже зарегистрирован
         is_admin, is_super_admin = employee
+        stored_name = get_user(user_id)[0]
         conn.close()
         
         if is_super_admin:
             await update.message.reply_text(
-                f"👋 С возвращением, {full_name}!\n"
+                f"👋 С возвращением, {stored_name}!\n"
                 f"Ваш статус: ⭐ Супер-администратор\n"
                 f"Используйте /admin для входа в панель управления."
             )
         elif is_admin:
             await update.message.reply_text(
-                f"👋 С возвращением, {full_name}!\n"
+                f"👋 С возвращением, {stored_name}!\n"
                 f"Ваш статус: 👑 Администратор\n"
                 f"Используйте /admin для входа в панель управления."
             )
         else:
+            # Новое приветствие для обычного сотрудника
             await update.message.reply_text(
-                f"👋 С возвращением, {full_name}!\n"
-                f"Используйте /checkin для начала смены или /timesheet для просмотра табеля."
+                f"👋 Привет, {stored_name}!\n\n"
+                f"📋 Что можно делать:\n"
+                f"✅ /checkin - отметить начало рабочего дня\n"
+                f"✅ /checkout - отметить конец рабочего дня\n"
+                f"📊 /timesheet - посмотреть свой табель\n"
+                f"📈 /stats - статистика за 30 дней\n\n"
+                f"Просто отправьте команду!"
             )
         return ConversationHandler.END
     
@@ -382,41 +420,22 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return ConversationHandler.END
         else:
-            # Есть должности и магазины - начинаем регистрацию
-            positions = get_positions()
-            if not positions:
-                await update.message.reply_text(
-                    "❌ В системе нет должностей. Обратитесь к администратору."
-                )
-                return ConversationHandler.END
-            
-            # Создаем клавиатуру с должностями
-            keyboard = []
-            for pos in positions:
-                keyboard.append([InlineKeyboardButton(pos, callback_data=f"reg_pos_{pos}")])
-            
-            # Добавляем кнопку отмены
-            keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel_registration")])
-            
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
+            # Запрашиваем имя перед регистрацией
             await update.message.reply_text(
-                "📝 Для регистрации выберите вашу должность:",
-                reply_markup=reply_markup
+                "📝 Для регистрации введите ваше ФИО (Имя Фамилия):\n"
+                "Например: Иван Иванов"
             )
-            return SELECT_POSITION
+            return ENTER_FULL_NAME
 
 async def checkin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отметка начала рабочего дня"""
     user_id = update.effective_user.id
     
-    # Проверка регистрации
     user = get_user(user_id)
     if not user:
         await update.message.reply_text("❌ Сначала зарегистрируйтесь через /start")
         return
     
-    # Проверка, нет ли уже активной смены
     active_shift = get_active_shift(user_id)
     if active_shift:
         await update.message.reply_text(
@@ -424,7 +443,6 @@ async def checkin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # Создаем новую смену
     now = get_now_utc8()
     today = now.date().isoformat()
     checkin_time = now.isoformat()
@@ -448,13 +466,11 @@ async def checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отметка конца рабочего дня"""
     user_id = update.effective_user.id
     
-    # Проверка регистрации
     user = get_user(user_id)
     if not user:
         await update.message.reply_text("❌ Сначала зарегистрируйтесь через /start")
         return
     
-    # Проверка наличия активной смены
     active_shift = get_active_shift(user_id)
     if not active_shift:
         await update.message.reply_text(
@@ -466,10 +482,8 @@ async def checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     checkin_time = datetime.fromisoformat(checkin_time_str)
     checkout_time = get_now_utc8()
     
-    # Расчет отработанных часов
     hours_worked = (checkout_time - checkin_time).total_seconds() / 3600
     
-    # Обновляем запись
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     cursor.execute('''
@@ -489,20 +503,17 @@ async def timesheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Просмотр табеля за указанный период"""
     user_id = update.effective_user.id
     
-    # Проверка регистрации
     user = get_user(user_id)
     if not user:
         await update.message.reply_text("❌ Сначала зарегистрируйтесь через /start")
         return
     
-    # Парсим аргументы
     args = context.args
-    days = 7  # по умолчанию
+    days = 7
     
     if args and args[0].isdigit():
         days = int(args[0])
     
-    # Получаем записи за период
     end_date = get_today_date_utc8()
     start_date = (datetime.now(TIMEZONE) - timedelta(days=days-1)).date().isoformat()
     
@@ -521,7 +532,6 @@ async def timesheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"📊 Нет записей за последние {days} дней")
         return
     
-    # Формируем отчет
     report = f"📋 ТАБЕЛЬ ЗА {days} ДНЕЙ\n\n"
     total_hours = 0
     
@@ -551,13 +561,11 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Статистика за 30 дней по дням недели"""
     user_id = update.effective_user.id
     
-    # Проверка регистрации
     user = get_user(user_id)
     if not user:
         await update.message.reply_text("❌ Сначала зарегистрируйтесь через /start")
         return
     
-    # Получаем статистику за 30 дней
     end_date = get_today_date_utc8()
     start_date = (datetime.now(TIMEZONE) - timedelta(days=29)).date().isoformat()
     
@@ -575,7 +583,6 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📊 Нет данных за последние 30 дней")
         return
     
-    # Анализ по дням недели
     day_stats = {
         0: {'name': 'Пн', 'count': 0, 'hours': 0},
         1: {'name': 'Вт', 'count': 0, 'hours': 0},
@@ -599,7 +606,6 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         total_days += 1
         total_hours += hours
     
-    # Формируем отчет
     report = "📊 СТАТИСТИКА ЗА 30 ДНЕЙ\n\n"
     report += "По дням недели:\n"
     
@@ -625,7 +631,6 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(user_id)
     is_super_admin = user[4] if user else 0
     
-    # Основное меню админа
     keyboard = [
         [InlineKeyboardButton("👥 Все сотрудники", callback_data="admin_list")],
         [InlineKeyboardButton("📊 По магазинам", callback_data="admin_by_store")],
@@ -639,7 +644,6 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🏪 Управление магазинами", callback_data="admin_stores_menu")],
     ]
     
-    # Кнопки для супер-админа
     if is_super_admin:
         keyboard.extend([
             [InlineKeyboardButton("➕ Добавить админа", callback_data="admin_add")],
@@ -658,7 +662,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
-# ИСПРАВЛЕНИЕ 3: Обновленная функция button_callback
+# Основной обработчик callback-запросов
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка нажатий на инлайн кнопки"""
     query = update.callback_query
@@ -669,22 +673,31 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     logger.info(f"Callback: {callback_data} от пользователя {user_id}")
     
-    # ИСПРАВЛЕНИЕ: Обработка отмены регистрации
+    # Обработка отмены регистрации
     if callback_data == "cancel_registration":
         await query.edit_message_text("❌ Регистрация отменена.")
         return ConversationHandler.END
     
-    # Получаем информацию о пользователе
     user = get_user(user_id)
     
-    # ИСПРАВЛЕНИЕ: Обработка регистрации (до проверки авторизации)
+    # Обработка регистрации с именем
     if callback_data.startswith("reg_pos_"):
         if user:
             await query.edit_message_text("❌ Вы уже зарегистрированы!")
             return ConversationHandler.END
-            
+        
+        full_name = context.user_data.get('full_name')
+        if not full_name:
+            full_name = query.from_user.full_name
+            await query.edit_message_text(
+                f"⚠️ Внимание! Будет использовано имя из Telegram: {full_name}\n"
+                f"Если хотите изменить имя, начните регистрацию заново."
+            )
+            await asyncio.sleep(2)
+        
         position = callback_data[8:]
         context.user_data['reg_position'] = position
+        context.user_data['full_name'] = full_name
         
         stores = get_stores()
         if not stores:
@@ -702,12 +715,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await query.edit_message_text(
-            "🏪 Теперь выберите ваш магазин:",
+            f"👤 Имя: {full_name}\n"
+            f"📋 Должность: {position}\n\n"
+            f"🏪 Теперь выберите ваш магазин:",
             reply_markup=reply_markup
         )
         return SELECT_STORE
     
-    # ИСПРАВЛЕНИЕ: Обработка выбора магазина
     elif callback_data.startswith("reg_store_"):
         if user:
             await query.edit_message_text("❌ Вы уже зарегистрированы!")
@@ -715,6 +729,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
         store = callback_data[10:]
         position = context.user_data.get('reg_position')
+        full_name = context.user_data.get('full_name')
         
         if not position:
             await query.edit_message_text(
@@ -722,14 +737,15 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return ConversationHandler.END
         
-        # Завершаем регистрацию
-        full_name = query.from_user.full_name
+        if not full_name:
+            full_name = query.from_user.full_name
+        
+        user_id = query.from_user.id
         
         conn = sqlite3.connect('timesheet.db')
         cursor = conn.cursor()
         
         try:
-            # Проверяем, не зарегистрирован ли уже пользователь
             cursor.execute("SELECT user_id FROM employees WHERE user_id = ?", (user_id,))
             if cursor.fetchone():
                 await query.edit_message_text(
@@ -738,7 +754,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 conn.close()
                 return ConversationHandler.END
             
-            # Регистрируем нового пользователя
             cursor.execute('''
                 INSERT INTO employees (user_id, full_name, position, store, reg_date, is_admin, is_super_admin)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -751,12 +766,17 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"✅ Регистрация успешно завершена!\n\n"
                 f"👤 {full_name}\n"
                 f"📋 Должность: {position}\n"
-                f"🏪 Магазин: {store}\n\n"
-                f"Теперь вы можете использовать команды:\n"
-                f"/checkin - начать рабочий день\n"
-                f"/checkout - закончить рабочий день\n"
-                f"/timesheet - посмотреть табель\n"
-                f"/stats - статистика"
+                f"🏪 Магазин: {store}"
+            )
+            
+            await query.message.reply_text(
+                f"👋 Привет, {full_name}!\n\n"
+                f"📋 Что можно делать:\n"
+                f"✅ /checkin - отметить начало рабочего дня\n"
+                f"✅ /checkout - отметить конец рабочего дня\n"
+                f"📊 /timesheet - посмотреть свой табель\n"
+                f"📈 /stats - статистика за 30 дней\n\n"
+                f"Просто отправьте команду!"
             )
             
         except Exception as e:
@@ -767,12 +787,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         finally:
             conn.close()
         
-        # Очищаем временные данные
         context.user_data.pop('reg_position', None)
+        context.user_data.pop('full_name', None)
         
         return ConversationHandler.END
     
-    # Для всех остальных callback_data проверяем авторизацию
     if not user:
         await query.edit_message_text("❌ Вы не зарегистрированы. Используйте /start")
         return
@@ -953,7 +972,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif period == "90":
                 days = 90
             elif period == "all":
-                days = 36500  # примерно 100 лет
+                days = 36500
             
             context.user_data['period_days'] = days
             await show_export_options(query, days)
@@ -1032,6 +1051,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         await show_delete_store_request_menu(query)
     
+    # ИСПРАВЛЕНО: Добавлен обработчик для запроса удаления сотрудника
     elif callback_data.startswith("request_delete_employee_"):
         if not (is_admin or is_super_admin):
             return
@@ -1115,6 +1135,44 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("❌ Недостаточно прав")
             return
         await show_add_admin_menu(query)
+    
+    elif callback_data.startswith("make_admin_"):
+        if not is_super_admin:
+            await query.edit_message_text("❌ Недостаточно прав")
+            return
+        
+        target_id = int(callback_data[10:])
+        
+        conn = sqlite3.connect('timesheet.db')
+        cursor = conn.cursor()
+        cursor.execute("SELECT full_name FROM employees WHERE user_id = ?", (target_id,))
+        result = cursor.fetchone()
+        
+        if not result:
+            await query.edit_message_text("❌ Сотрудник не найден")
+            conn.close()
+            return
+        
+        target_name = result[0]
+        
+        cursor.execute("UPDATE employees SET is_admin = 1 WHERE user_id = ?", (target_id,))
+        conn.commit()
+        conn.close()
+        
+        await query.edit_message_text(f"✅ Сотрудник {target_name} назначен администратором!")
+        
+        try:
+            await query.message.bot.send_message(
+                target_id,
+                f"👑 Поздравляем! Вы назначены администратором!\n\n"
+                f"Теперь вам доступна панель администратора (/admin)."
+            )
+        except Exception as e:
+            logger.error(f"Failed to notify new admin {target_id}: {e}")
+        
+        keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")]]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
 
 # Вспомогательные функции для административных панелей
 async def show_admin_panel(query):
@@ -1160,7 +1218,6 @@ async def show_all_employees(query):
         role = "⭐ Супер-админ" if is_super_admin else "👑 Админ" if is_admin else "👤 Сотрудник"
         text += f"• {full_name}\n  {role} | {position} | {store}\n\n"
     
-    # Разбиваем длинное сообщение
     if len(text) > MAX_MESSAGE_LENGTH:
         for i in range(0, len(text), MAX_MESSAGE_LENGTH):
             part = text[i:i+MAX_MESSAGE_LENGTH]
@@ -1171,7 +1228,6 @@ async def show_all_employees(query):
     else:
         await query.edit_message_text(text)
     
-    # Добавляем кнопку "Назад"
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
@@ -1191,7 +1247,6 @@ async def show_employees_by_store(query):
         await query.edit_message_text("👥 Нет зарегистрированных сотрудников")
         return
     
-    # Группируем по магазинам
     stores_dict = {}
     for emp in employees:
         store, full_name, position, is_admin, is_super_admin = emp
@@ -1208,7 +1263,6 @@ async def show_employees_by_store(query):
             text += f"  {emp}\n"
         text += "\n"
     
-    # Разбиваем длинное сообщение
     if len(text) > MAX_MESSAGE_LENGTH:
         for i in range(0, len(text), MAX_MESSAGE_LENGTH):
             part = text[i:i+MAX_MESSAGE_LENGTH]
@@ -1219,7 +1273,6 @@ async def show_employees_by_store(query):
     else:
         await query.edit_message_text(text)
     
-    # Добавляем кнопку "Назад"
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
@@ -1315,7 +1368,6 @@ async def show_store_stats(query):
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     
-    # Получаем список магазинов
     cursor.execute("SELECT name FROM stores")
     stores = cursor.fetchall()
     
@@ -1328,14 +1380,12 @@ async def show_store_stats(query):
     for store in stores:
         store_name = store[0]
         
-        # Количество сотрудников
         cursor.execute(
             "SELECT COUNT(*) FROM employees WHERE store = ?",
             (store_name,)
         )
         emp_count = cursor.fetchone()[0]
         
-        # Количество смен за последние 30 дней
         today = get_today_date_utc8()
         month_ago = (datetime.now(TIMEZONE) - timedelta(days=30)).date().isoformat()
         
@@ -1361,7 +1411,6 @@ async def show_store_stats(query):
     
     await query.edit_message_text(text)
     
-    # Добавляем кнопку "Назад"
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
@@ -1431,13 +1480,61 @@ async def show_stores_menu(query):
         reply_markup=reply_markup
     )
 
+# Меню добавления администратора
+async def show_add_admin_menu(query):
+    """Меню добавления администратора"""
+    conn = sqlite3.connect('timesheet.db')
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        SELECT user_id, full_name, position, store 
+        FROM employees 
+        WHERE is_admin = 0 AND is_super_admin = 0
+        ORDER BY store, full_name
+    ''')
+    
+    employees = cursor.fetchall()
+    conn.close()
+    
+    if not employees:
+        await query.edit_message_text(
+            "👥 Нет обычных сотрудников для назначения администраторами"
+        )
+        return
+    
+    text = "➕ ВЫБОР СОТРУДНИКА ДЛЯ НАЗНАЧЕНИЯ АДМИНИСТРАТОРОМ\n\n"
+    
+    keyboard = []
+    for emp in employees:
+        user_id, full_name, position, store = emp
+        text += f"👤 {full_name}\n"
+        text += f"   {position} | {store}\n\n"
+        
+        keyboard.append([
+            InlineKeyboardButton(f"👑 {full_name}", 
+                               callback_data=f"make_admin_{user_id}")
+        ])
+    
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    if len(text) > MAX_MESSAGE_LENGTH:
+        await query.edit_message_text(text[:MAX_MESSAGE_LENGTH])
+        remaining = text[MAX_MESSAGE_LENGTH:]
+        while remaining:
+            await query.message.reply_text(remaining[:MAX_MESSAGE_LENGTH])
+            remaining = remaining[MAX_MESSAGE_LENGTH:]
+        await query.message.reply_text("Выберите сотрудника:", reply_markup=reply_markup)
+    else:
+        await query.edit_message_text(text, reply_markup=reply_markup)
+
 # Функции для управления должностями
 async def create_position(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Создание новой должности"""
     user_id = update.effective_user.id
     position_name = update.message.text.strip()
     
-    # Проверка на существование
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     
@@ -1453,7 +1550,6 @@ async def create_position(update: Update, context: ContextTypes.DEFAULT_TYPE):
     finally:
         conn.close()
     
-    # Возвращаемся в меню должностей
     keyboard = [
         [InlineKeyboardButton("◀️ Назад в управление должностями", callback_data="admin_positions_menu")]
     ]
@@ -1479,7 +1575,6 @@ async def list_positions(query):
     
     await query.edit_message_text(text)
     
-    # Добавляем кнопку "Назад"
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="admin_positions_menu")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
@@ -1494,7 +1589,6 @@ async def show_delete_position_menu(query):
     
     keyboard = []
     for pos in positions:
-        # Проверяем, используется ли должность
         conn = sqlite3.connect('timesheet.db')
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM employees WHERE position = ?", (pos,))
@@ -1526,7 +1620,6 @@ async def delete_position(query, position_name):
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     
-    # Проверяем, используется ли должность
     cursor.execute("SELECT COUNT(*) FROM employees WHERE position = ?", (position_name,))
     count = cursor.fetchone()[0]
     
@@ -1538,14 +1631,12 @@ async def delete_position(query, position_name):
         conn.close()
         return
     
-    # Удаляем должность
     cursor.execute("DELETE FROM positions WHERE name = ?", (position_name,))
     conn.commit()
     conn.close()
     
     await query.edit_message_text(f"✅ Должность '{position_name}' удалена")
     
-    # Возвращаемся в меню
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="admin_positions_menu")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
@@ -1591,7 +1682,6 @@ async def create_store_address(update: Update, context: ContextTypes.DEFAULT_TYP
     finally:
         conn.close()
     
-    # Возвращаемся в меню магазинов
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="admin_stores_menu")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
@@ -1599,7 +1689,6 @@ async def create_store_address(update: Update, context: ContextTypes.DEFAULT_TYP
         reply_markup=reply_markup
     )
     
-    # Очищаем временные данные
     context.user_data.pop('new_store_name', None)
     
     return ConversationHandler.END
@@ -1618,7 +1707,6 @@ async def list_stores(query):
     
     await query.edit_message_text(text)
     
-    # Добавляем кнопку "Назад"
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="admin_stores_menu")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
@@ -1633,7 +1721,6 @@ async def show_delete_store_menu(query):
     
     keyboard = []
     for store_name, address in stores:
-        # Проверяем, используется ли магазин
         conn = sqlite3.connect('timesheet.db')
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM employees WHERE store = ?", (store_name,))
@@ -1665,7 +1752,6 @@ async def delete_store(query, store_name):
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     
-    # Проверяем, используется ли магазин
     cursor.execute("SELECT COUNT(*) FROM employees WHERE store = ?", (store_name,))
     count = cursor.fetchone()[0]
     
@@ -1677,14 +1763,12 @@ async def delete_store(query, store_name):
         conn.close()
         return
     
-    # Удаляем магазин
     cursor.execute("DELETE FROM stores WHERE name = ?", (store_name,))
     conn.commit()
     conn.close()
     
     await query.edit_message_text(f"✅ Магазин '{store_name}' удален")
     
-    # Возвращаемся в меню
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="admin_stores_menu")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
@@ -1695,7 +1779,6 @@ async def export_csv(query, store, confirmed_only=True):
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     
-    # Формируем запрос
     if store == "all":
         if confirmed_only:
             cursor.execute('''
@@ -1742,11 +1825,9 @@ async def export_csv(query, store, confirmed_only=True):
         await query.edit_message_text("📊 Нет данных для экспорта")
         return
     
-    # Создаем CSV в памяти
     output = io.StringIO()
     writer = csv.writer(output, delimiter=';', quoting=csv.QUOTE_MINIMAL)
     
-    # Заголовки на русском
     writer.writerow([
         'Сотрудник', 'Должность', 'Магазин', 'Дата', 'Начало', 'Конец',
         'Часов', 'Примечания', 'Подтверждено'
@@ -1755,14 +1836,9 @@ async def export_csv(query, store, confirmed_only=True):
     for record in records:
         full_name, position, store_name, date_str, checkin, checkout, hours, notes, confirmed = record
         
-        # Форматирование времени
         checkin_time = format_time_utc8(datetime.fromisoformat(checkin)) if checkin else "-"
         checkout_time = format_time_utc8(datetime.fromisoformat(checkout)) if checkout else "-"
-        
-        # Конвертация в русские статусы
         confirmed_str = "Да" if confirmed else "Нет"
-        
-        # Замена точки на запятую в часах
         hours_str = str(hours).replace('.', ',')
         
         writer.writerow([
@@ -1770,17 +1846,14 @@ async def export_csv(query, store, confirmed_only=True):
             hours_str, notes or "", confirmed_str
         ])
     
-    # Получаем данные для отправки
     csv_data = output.getvalue().encode('utf-8-sig')
     output.close()
     
-    # Формируем имя файла
     today = get_today_date_utc8()
     store_part = "all" if store == "all" else store
     confirmed_part = "confirmed" if confirmed_only else "all"
     filename = f"timesheet_{store_part}_{confirmed_part}_{today}.csv"
     
-    # Отправляем файл
     await query.message.reply_document(
         document=io.BytesIO(csv_data),
         filename=filename,
@@ -1789,7 +1862,6 @@ async def export_csv(query, store, confirmed_only=True):
     
     await query.edit_message_text("✅ Экспорт завершен!")
     
-    # Возвращаемся в меню
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
@@ -1829,7 +1901,6 @@ async def export_csv_period(query, days, confirmed_only=True):
         await query.edit_message_text(f"📊 Нет данных за период {period_text}")
         return
     
-    # Создаем CSV
     output = io.StringIO()
     writer = csv.writer(output, delimiter=';', quoting=csv.QUOTE_MINIMAL)
     
@@ -1854,7 +1925,6 @@ async def export_csv_period(query, days, confirmed_only=True):
     csv_data = output.getvalue().encode('utf-8-sig')
     output.close()
     
-    # Имя файла
     confirmed_part = "confirmed" if confirmed_only else "all"
     filename = f"timesheet_period_{start_date}_to_{end_date}_{confirmed_part}.csv"
     
@@ -1866,7 +1936,6 @@ async def export_csv_period(query, days, confirmed_only=True):
     
     await query.edit_message_text("✅ Экспорт завершен!")
     
-    # Возвращаемся в меню
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
@@ -1906,7 +1975,6 @@ async def show_unconfirmed_today(query):
         text += f"🏪 {store}\n"
         text += f"⏱ {checkin_time} - {checkout_time} ({hours} ч)\n\n"
     
-    # Создаем клавиатуру
     keyboard = []
     for shift in unconfirmed:
         shift_id = shift[0]
@@ -1919,7 +1987,6 @@ async def show_unconfirmed_today(query):
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Разбиваем длинное сообщение
     if len(text) > MAX_MESSAGE_LENGTH:
         await query.edit_message_text(text[:MAX_MESSAGE_LENGTH])
         remaining = text[MAX_MESSAGE_LENGTH:]
@@ -1971,7 +2038,6 @@ async def show_unconfirmed_period(query, days):
     
     text = f"📋 НЕПОДТВЕРЖДЕННЫЕ СМЕНЫ ЗА {days} ДНЕЙ\n\n"
     
-    # Группируем по датам
     by_date = {}
     for shift in unconfirmed:
         date = shift[3]
@@ -1990,7 +2056,6 @@ async def show_unconfirmed_period(query, days):
             text += f"  🆔 {shift_id} | {full_name} | {store}\n"
             text += f"  ⏱ {checkin_time} - {checkout_time} ({hours} ч)\n\n"
     
-    # Создаем клавиатуру (только первые 20 для избежания переполнения)
     keyboard = []
     for shift in unconfirmed[:20]:
         shift_id = shift[0]
@@ -2007,7 +2072,6 @@ async def show_unconfirmed_period(query, days):
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Разбиваем длинное сообщение
     if len(text) > MAX_MESSAGE_LENGTH:
         await query.edit_message_text(text[:MAX_MESSAGE_LENGTH])
         remaining = text[MAX_MESSAGE_LENGTH:]
@@ -2035,7 +2099,6 @@ async def confirm_all_today(query):
     
     await query.edit_message_text(f"✅ Подтверждено {count} смен за {today}")
     
-    # Возвращаемся в меню
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_confirm")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
@@ -2050,7 +2113,6 @@ async def show_confirm_by_store(query):
     
     keyboard = []
     for store_name, address in stores:
-        # Считаем неподтвержденные смены в магазине
         conn = sqlite3.connect('timesheet.db')
         cursor = conn.cursor()
         cursor.execute('''
@@ -2107,13 +2169,11 @@ async def show_store_unconfirmed(query, store):
         text += f"📅 {date}\n"
         text += f"⏱ {checkin_time} - {checkout_time} ({hours} ч)\n\n"
     
-    # Клавиатура
     keyboard = [
         [InlineKeyboardButton(f"✅ Подтвердить все в {store}", 
                             callback_data=f"confirm_all_store_{store}")]
     ]
     
-    # Добавляем кнопки для отдельных смен (первые 10)
     for shift in unconfirmed[:10]:
         shift_id = shift[0]
         keyboard.append([
@@ -2125,7 +2185,6 @@ async def show_store_unconfirmed(query, store):
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Разбиваем длинное сообщение
     if len(text) > MAX_MESSAGE_LENGTH:
         await query.edit_message_text(text[:MAX_MESSAGE_LENGTH])
         remaining = text[MAX_MESSAGE_LENGTH:]
@@ -2141,7 +2200,6 @@ async def confirm_all_store(query, store):
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     
-    # Обновляем смены
     cursor.execute('''
         UPDATE timesheet 
         SET confirmed = 1 
@@ -2159,7 +2217,6 @@ async def confirm_all_store(query, store):
     
     await query.edit_message_text(f"✅ Подтверждено {count} смен в магазине '{store}'")
     
-    # Возвращаемся в меню
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_confirm")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
@@ -2174,7 +2231,6 @@ async def confirm_shift(query, shift_id):
     
     await query.edit_message_text(f"✅ Смена #{shift_id} подтверждена")
     
-    # Возвращаемся в меню
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_confirm")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
@@ -2184,7 +2240,6 @@ async def show_confirm_stats(query):
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     
-    # Общая статистика
     cursor.execute('''
         SELECT 
             COUNT(*) as total,
@@ -2199,7 +2254,6 @@ async def show_confirm_stats(query):
     confirmed = confirmed or 0
     unconfirmed = unconfirmed or 0
     
-    # Статистика по магазинам
     cursor.execute('''
         SELECT 
             e.store,
@@ -2236,7 +2290,6 @@ async def show_confirm_stats(query):
     
     await query.edit_message_text(text)
     
-    # Добавляем кнопку "Назад"
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_confirm")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
@@ -2247,7 +2300,6 @@ async def show_delete_employee_menu(query):
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     
-    # Получаем всех сотрудников, кроме текущего и супер-админов
     cursor.execute('''
         SELECT user_id, full_name, position, store 
         FROM employees 
@@ -2264,7 +2316,6 @@ async def show_delete_employee_menu(query):
     
     text = "👤 ВЫБОР СОТРУДНИКА ДЛЯ УДАЛЕНИЯ\n\n"
     
-    # Группируем по магазинам
     by_store = {}
     for emp in employees:
         user_id, full_name, position, store = emp
@@ -2278,7 +2329,6 @@ async def show_delete_employee_menu(query):
             text += f"  👤 {full_name} - {position}\n"
         text += "\n"
     
-    # Создаем клавиатуру
     keyboard = []
     for user_id, full_name, position, store in employees:
         keyboard.append([
@@ -2290,7 +2340,6 @@ async def show_delete_employee_menu(query):
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Разбиваем длинное сообщение
     if len(text) > MAX_MESSAGE_LENGTH:
         await query.edit_message_text(text[:MAX_MESSAGE_LENGTH])
         remaining = text[MAX_MESSAGE_LENGTH:]
@@ -2438,7 +2487,6 @@ async def show_delete_requests(query):
         req_text += f"📊 Статус: {status_text}\n\n"
         
         if status == 'pending':
-            # Добавляем в клавиатуру только ожидающие
             pending_keyboard.append([
                 InlineKeyboardButton(f"✅ Одобрить #{req_id}", callback_data=f"approve_request_{req_id}"),
                 InlineKeyboardButton(f"❌ Отклонить #{req_id}", callback_data=f"reject_request_{req_id}")
@@ -2450,13 +2498,11 @@ async def show_delete_requests(query):
     if other_text:
         text += "📋 ЗАВЕРШЕННЫЕ ЗАПРОСЫ:\n\n" + other_text
     
-    # Добавляем кнопки для ожидающих запросов
     keyboard = pending_keyboard
     keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Разбиваем длинное сообщение
     if len(text) > MAX_MESSAGE_LENGTH:
         await query.edit_message_text(text[:MAX_MESSAGE_LENGTH])
         remaining = text[MAX_MESSAGE_LENGTH:]
@@ -2472,7 +2518,6 @@ async def approve_delete_request(query, request_id):
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     
-    # Получаем информацию о запросе
     cursor.execute('''
         SELECT target_type, target_id, target_name, requester_id, requester_name
         FROM delete_requests
@@ -2488,9 +2533,7 @@ async def approve_delete_request(query, request_id):
     
     target_type, target_id, target_name, requester_id, requester_name = request
     
-    # Проверяем, можно ли удалить
     if target_type == "employee":
-        # Нельзя удалить супер-админа
         cursor.execute("SELECT is_super_admin FROM employees WHERE user_id = ?", (target_id,))
         is_super_admin = cursor.fetchone()
         if is_super_admin and is_super_admin[0] == 1:
@@ -2498,12 +2541,10 @@ async def approve_delete_request(query, request_id):
             conn.close()
             return
         
-        # Удаляем сотрудника и его смены
         cursor.execute("DELETE FROM timesheet WHERE user_id = ?", (target_id,))
         cursor.execute("DELETE FROM employees WHERE user_id = ?", (target_id,))
         
-    else:  # store
-        # Проверяем, есть ли сотрудники в магазине
+    else:
         cursor.execute("SELECT COUNT(*) FROM employees WHERE store = ?", (target_name,))
         emp_count = cursor.fetchone()[0]
         
@@ -2515,10 +2556,8 @@ async def approve_delete_request(query, request_id):
             conn.close()
             return
         
-        # Удаляем магазин
         cursor.execute("DELETE FROM stores WHERE name = ?", (target_name,))
     
-    # Обновляем статус запроса
     cursor.execute('''
         UPDATE delete_requests 
         SET status = 'approved' 
@@ -2530,7 +2569,6 @@ async def approve_delete_request(query, request_id):
     
     await query.edit_message_text(f"✅ Запрос #{request_id} одобрен, удаление выполнено")
     
-    # Уведомляем запросившего
     try:
         await query.message.bot.send_message(
             requester_id,
@@ -2539,7 +2577,6 @@ async def approve_delete_request(query, request_id):
     except Exception as e:
         logger.error(f"Failed to notify requester {requester_id}: {e}")
     
-    # Возвращаемся к списку запросов
     await show_delete_requests(query)
 
 async def reject_delete_request(query, request_id):
@@ -2547,7 +2584,6 @@ async def reject_delete_request(query, request_id):
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     
-    # Получаем информацию о запросе
     cursor.execute('''
         SELECT target_type, target_name, requester_id
         FROM delete_requests
@@ -2563,7 +2599,6 @@ async def reject_delete_request(query, request_id):
     
     target_type, target_name, requester_id = request
     
-    # Обновляем статус
     cursor.execute('''
         UPDATE delete_requests 
         SET status = 'rejected' 
@@ -2575,7 +2610,6 @@ async def reject_delete_request(query, request_id):
     
     await query.edit_message_text(f"❌ Запрос #{request_id} отклонен")
     
-    # Уведомляем запросившего
     try:
         await query.message.bot.send_message(
             requester_id,
@@ -2584,7 +2618,6 @@ async def reject_delete_request(query, request_id):
     except Exception as e:
         logger.error(f"Failed to notify requester {requester_id}: {e}")
     
-    # Возвращаемся к списку запросов
     await show_delete_requests(query)
 
 # Функции для заявок на админа
@@ -2592,7 +2625,6 @@ async def handle_admin_request(query, context, user_id, user_info):
     """Обработка заявки на становление администратором"""
     full_name = user_info[0] if user_info else query.from_user.full_name
     
-    # Проверяем, нет ли уже активной заявки
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     cursor.execute('''
@@ -2609,7 +2641,6 @@ async def handle_admin_request(query, context, user_id, user_info):
         conn.close()
         return
     
-    # Создаем заявку
     cursor.execute('''
         INSERT INTO admin_requests 
         (request_date, user_id, user_name, status)
@@ -2624,7 +2655,6 @@ async def handle_admin_request(query, context, user_id, user_info):
         "Ожидайте решения супер-администратора."
     )
     
-    # Уведомляем супер-админов
     super_admins = get_super_admins()
     for admin_id, admin_name in super_admins:
         try:
@@ -2698,13 +2728,11 @@ async def show_admin_requests(query):
     if other_text:
         text += "📋 ЗАВЕРШЕННЫЕ ЗАЯВКИ:\n\n" + other_text
     
-    # Добавляем кнопки для ожидающих заявок
     keyboard = pending_keyboard
     keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Разбиваем длинное сообщение
     if len(text) > MAX_MESSAGE_LENGTH:
         await query.edit_message_text(text[:MAX_MESSAGE_LENGTH])
         remaining = text[MAX_MESSAGE_LENGTH:]
@@ -2720,7 +2748,6 @@ async def approve_admin_request(query, request_id):
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     
-    # Получаем информацию о заявке
     cursor.execute('''
         SELECT user_id, user_name
         FROM admin_requests
@@ -2736,19 +2763,16 @@ async def approve_admin_request(query, request_id):
     
     user_id, user_name = request
     
-    # Проверяем, зарегистрирован ли пользователь
     cursor.execute("SELECT full_name FROM employees WHERE user_id = ?", (user_id,))
     employee = cursor.fetchone()
     
     if employee:
-        # Пользователь уже зарегистрирован - делаем его админом
         cursor.execute('''
             UPDATE employees 
             SET is_admin = 1 
             WHERE user_id = ?
         ''', (user_id,))
     else:
-        # Новый пользователь - создаем временную запись
         cursor.execute('''
             INSERT INTO employees 
             (user_id, full_name, position, store, reg_date, is_admin, is_super_admin)
@@ -2756,7 +2780,6 @@ async def approve_admin_request(query, request_id):
         ''', (user_id, user_name, "Администратор", "Главный офис", 
               get_today_date_utc8(), 1, 0))
     
-    # Обновляем статус заявки
     cursor.execute('''
         UPDATE admin_requests 
         SET status = 'approved' 
@@ -2768,7 +2791,6 @@ async def approve_admin_request(query, request_id):
     
     await query.edit_message_text(f"✅ Заявка #{request_id} одобрена, пользователь стал администратором")
     
-    # Уведомляем пользователя
     try:
         await query.message.bot.send_message(
             user_id,
@@ -2779,7 +2801,6 @@ async def approve_admin_request(query, request_id):
     except Exception as e:
         logger.error(f"Failed to notify user {user_id}: {e}")
     
-    # Возвращаемся к списку заявок
     await show_admin_requests(query)
 
 async def reject_admin_request(query, request_id):
@@ -2787,7 +2808,6 @@ async def reject_admin_request(query, request_id):
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     
-    # Получаем информацию о заявке
     cursor.execute('''
         SELECT user_id, user_name
         FROM admin_requests
@@ -2803,7 +2823,6 @@ async def reject_admin_request(query, request_id):
     
     user_id, user_name = request
     
-    # Обновляем статус
     cursor.execute('''
         UPDATE admin_requests 
         SET status = 'rejected' 
@@ -2815,7 +2834,6 @@ async def reject_admin_request(query, request_id):
     
     await query.edit_message_text(f"❌ Заявка #{request_id} отклонена")
     
-    # Уведомляем пользователя
     try:
         await query.message.bot.send_message(
             user_id,
@@ -2824,7 +2842,6 @@ async def reject_admin_request(query, request_id):
     except Exception as e:
         logger.error(f"Failed to notify user {user_id}: {e}")
     
-    # Возвращаемся к списку заявок
     await show_admin_requests(query)
 
 # Функции для управления супер-админами
@@ -2850,7 +2867,6 @@ async def show_assign_super_admin_list(query):
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     
-    # Получаем всех администраторов, которые не являются супер-админами
     cursor.execute('''
         SELECT user_id, full_name, position, store 
         FROM employees 
@@ -2885,7 +2901,6 @@ async def show_assign_super_admin_list(query):
     
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    # Разбиваем длинное сообщение
     if len(text) > MAX_MESSAGE_LENGTH:
         await query.edit_message_text(text[:MAX_MESSAGE_LENGTH])
         remaining = text[MAX_MESSAGE_LENGTH:]
@@ -2901,7 +2916,6 @@ async def confirm_assign_super_admin(query, target_id):
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     
-    # Получаем информацию о кандидате
     cursor.execute('''
         SELECT full_name, position, store 
         FROM employees 
@@ -2940,7 +2954,6 @@ async def assign_super_admin(query, target_id):
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     
-    # Обновляем статус
     cursor.execute('''
         UPDATE employees 
         SET is_super_admin = 1 
@@ -2952,7 +2965,6 @@ async def assign_super_admin(query, target_id):
     
     await query.edit_message_text(f"✅ Пользователь назначен супер-администратором!")
     
-    # Уведомляем назначенного
     try:
         await query.message.bot.send_message(
             target_id,
@@ -2962,7 +2974,6 @@ async def assign_super_admin(query, target_id):
     except Exception as e:
         logger.error(f"Failed to notify new super admin {target_id}: {e}")
     
-    # Возвращаемся в меню
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="assign_super_admin_menu")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
@@ -2982,60 +2993,9 @@ async def list_super_admins(query):
     
     await query.edit_message_text(text)
     
-    # Добавляем кнопку "Назад"
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="assign_super_admin_menu")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
-
-async def show_add_admin_menu(query):
-    """Меню добавления администратора"""
-    conn = sqlite3.connect('timesheet.db')
-    cursor = conn.cursor()
-    
-    # Получаем всех обычных сотрудников
-    cursor.execute('''
-        SELECT user_id, full_name, position, store 
-        FROM employees 
-        WHERE is_admin = 0 AND is_super_admin = 0
-        ORDER BY store, full_name
-    ''')
-    
-    employees = cursor.fetchall()
-    conn.close()
-    
-    if not employees:
-        await query.edit_message_text(
-            "👥 Нет обычных сотрудников для назначения администраторами"
-        )
-        return
-    
-    text = "➕ ВЫБОР СОТРУДНИКА ДЛЯ НАЗНАЧЕНИЯ АДМИНИСТРАТОРОМ\n\n"
-    
-    keyboard = []
-    for emp in employees:
-        user_id, full_name, position, store = emp
-        text += f"👤 {full_name}\n"
-        text += f"   {position} | {store}\n\n"
-        
-        keyboard.append([
-            InlineKeyboardButton(f"👑 {full_name}", 
-                               callback_data=f"make_admin_{user_id}")
-        ])
-    
-    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")])
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    # Разбиваем длинное сообщение
-    if len(text) > MAX_MESSAGE_LENGTH:
-        await query.edit_message_text(text[:MAX_MESSAGE_LENGTH])
-        remaining = text[MAX_MESSAGE_LENGTH:]
-        while remaining:
-            await query.message.reply_text(remaining[:MAX_MESSAGE_LENGTH])
-            remaining = remaining[MAX_MESSAGE_LENGTH:]
-        await query.message.reply_text("Выберите сотрудника:", reply_markup=reply_markup)
-    else:
-        await query.edit_message_text(text, reply_markup=reply_markup)
 
 # Обработчики текстовых сообщений для ConversationHandler
 async def get_custom_period_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -3043,7 +3003,6 @@ async def get_custom_period_start(update: Update, context: ContextTypes.DEFAULT_
     date_str = update.message.text.strip()
     
     try:
-        # Проверяем формат даты
         start_date = datetime.strptime(date_str, "%Y-%m-%d").date()
         context.user_data['period_start'] = date_str
         
@@ -3074,11 +3033,9 @@ async def get_custom_period_end(update: Update, context: ContextTypes.DEFAULT_TY
             )
             return CUSTOM_PERIOD_END
         
-        # Вычисляем количество дней
         days = (end_date - start_date).days + 1
         context.user_data['period_days'] = days
         
-        # Показываем опции экспорта
         keyboard = [
             [InlineKeyboardButton("📥 CSV (только подтвержденные)", callback_data="export_confirmed")],
             [InlineKeyboardButton("📥 CSV (все смены)", callback_data="export_all")],
@@ -3109,23 +3066,16 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return ConversationHandler.END
 
-# ИСПРАВЛЕНИЕ 4: Основная функция запуска
+# Основная функция запуска
 async def main_async():
     """Основная асинхронная функция"""
     try:
-        # Шаг 1: Принудительно удаляем webhook и сбрасываем очередь
         await delete_webhook()
-        
-        # Небольшая пауза
         await asyncio.sleep(1)
-        
-        # Шаг 2: Инициализируем базу данных
         init_database()
         
-        # Шаг 3: Создаем приложение
         app = Application.builder().token(BOT_TOKEN).build()
         
-        # Регистрируем обработчики команд
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("checkin", checkin))
         app.add_handler(CommandHandler("checkout", checkout))
@@ -3134,13 +3084,16 @@ async def main_async():
         app.add_handler(CommandHandler("admin", admin_panel))
         app.add_handler(CommandHandler("cancel", cancel_registration))
         
-        # ИСПРАВЛЕНИЕ: ConversationHandler для регистрации
+        # ConversationHandler для регистрации с вводом имени
         reg_conv_handler = ConversationHandler(
             entry_points=[
                 CommandHandler("start", start),
-                CallbackQueryHandler(button_callback, pattern="^reg_pos_")
             ],
             states={
+                ENTER_FULL_NAME: [
+                    MessageHandler(filters.TEXT & ~filters.COMMAND, enter_full_name),
+                    CommandHandler("cancel", cancel_registration)
+                ],
                 SELECT_POSITION: [
                     CallbackQueryHandler(button_callback, pattern="^reg_pos_"),
                     CallbackQueryHandler(button_callback, pattern="^cancel_registration$"),
@@ -3161,7 +3114,6 @@ async def main_async():
         )
         app.add_handler(reg_conv_handler)
         
-        # ConversationHandler для создания должности
         create_position_conv = ConversationHandler(
             entry_points=[CallbackQueryHandler(button_callback, pattern="^create_position$")],
             states={
@@ -3172,7 +3124,6 @@ async def main_async():
         )
         app.add_handler(create_position_conv)
         
-        # ConversationHandler для создания магазина
         create_store_conv = ConversationHandler(
             entry_points=[CallbackQueryHandler(button_callback, pattern="^create_store$")],
             states={
@@ -3184,7 +3135,6 @@ async def main_async():
         )
         app.add_handler(create_store_conv)
         
-        # ConversationHandler для пользовательского периода
         custom_period_conv = ConversationHandler(
             entry_points=[CallbackQueryHandler(button_callback, pattern="^period_custom$")],
             states={
@@ -3196,12 +3146,10 @@ async def main_async():
         )
         app.add_handler(custom_period_conv)
         
-        # Основной обработчик callback-запросов
         app.add_handler(CallbackQueryHandler(button_callback))
         
         logger.info("🚀 Bot started successfully")
         
-        # Запускаем polling
         await app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
         
     except Exception as e:
