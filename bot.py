@@ -283,15 +283,30 @@ async def cancel_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     return ConversationHandler.END
 
-# Функция для ввода имени при регистрации
+# ВРЕМЕННО: функция для отладки сообщений
+async def debug_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Отладка всех сообщений"""
+    user_id = update.effective_user.id
+    text = update.message.text
+    logger.info(f"🔥🔥🔥 ПОЛУЧЕНО СООБЩЕНИЕ от {user_id}: '{text}'")
+    logger.info(f"Текущий user_data: {context.user_data}")
+    
+    # Проверяем, есть ли активный ConversationHandler
+    if context.user_data.get('conversation_state'):
+        logger.info(f"Активное состояние: {context.user_data['conversation_state']}")
+    
+    # Пропускаем сообщение дальше
+    return
+
+# ИСПРАВЛЕНО: Функция для ввода имени при регистрации
 async def enter_full_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Получение ФИО от пользователя"""
     user_id = update.effective_user.id
     full_name = update.message.text.strip()
     
-    debug_print(f"=== enter_full_name вызвана для пользователя {user_id} ===")
-    debug_print(f"Введенное имя: '{full_name}'")
-    logger.info(f"enter_full_name: пользователь {user_id} ввел имя '{full_name}'")
+    logger.info(f"🔥🔥🔥🔥🔥 enter_full_name ВЫЗВАНА для пользователя {user_id}")
+    logger.info(f"🔥 Введенное имя: '{full_name}'")
+    logger.info(f"🔥 Текущий user_data: {context.user_data}")
     
     if len(full_name) < 2:
         await update.message.reply_text(
@@ -301,11 +316,11 @@ async def enter_full_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Сохраняем имя
     context.user_data['full_name'] = full_name
-    debug_print(f"Имя сохранено в user_data: {context.user_data['full_name']}")
+    logger.info(f"✅ Имя сохранено в user_data: {context.user_data['full_name']}")
     
     # Показываем должности
     positions = get_positions()
-    debug_print(f"Получен список должностей: {positions}")
+    logger.info(f"Получен список должностей: {positions}")
     
     if not positions:
         await update.message.reply_text(
@@ -321,14 +336,14 @@ async def enter_full_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="cancel_registration")])
     reply_markup = InlineKeyboardMarkup(keyboard)
     
-    sent_message = await update.message.reply_text(
+    await update.message.reply_text(
         f"👤 Ваше имя: {full_name}\n\n"
         f"📝 Теперь выберите вашу должность:",
         reply_markup=reply_markup
     )
     
-    debug_print(f"Отправлено сообщение с ID: {sent_message.message_id}")
-    debug_print(f"=== enter_full_name завершена, возвращаем SELECT_POSITION ({SELECT_POSITION}) ===")
+    logger.info(f"✅ Отправлено меню выбора должности")
+    logger.info(f"✅ Возвращаем состояние SELECT_POSITION = {SELECT_POSITION}")
     
     return SELECT_POSITION
 
@@ -345,15 +360,15 @@ async def delete_webhook():
     except Exception as e:
         logger.error(f"❌ Ошибка при удалении webhook: {e}")
 
-# Обновленная функция start
+# ИСПРАВЛЕНО: Обновленная функция start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start - регистрация или главное меню"""
     user = update.effective_user
     user_id = user.id
     full_name = user.full_name
     
-    logger.info(f"Команда /start от пользователя {user_id} ({full_name})")
-    debug_print(f"=== start вызвана для пользователя {user_id} ===")
+    logger.info(f"🔥 Команда /start от пользователя {user_id} ({full_name})")
+    logger.info(f"Текущий user_data перед start: {context.user_data}")
     
     # Проверяем, зарегистрирован ли пользователь
     conn = sqlite3.connect('timesheet.db')
@@ -370,7 +385,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         stored_name = get_user(user_id)[0]
         conn.close()
         
-        debug_print(f"Пользователь уже зарегистрирован: is_admin={is_admin}, is_super_admin={is_super_admin}")
+        logger.info(f"Пользователь уже зарегистрирован: is_admin={is_admin}, is_super_admin={is_super_admin}")
         
         if is_super_admin:
             await update.message.reply_text(
@@ -385,7 +400,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Используйте /admin для входа в панель управления."
             )
         else:
-            # Новое приветствие для обычного сотрудника
             await update.message.reply_text(
                 f"👋 Привет, {stored_name}!\n\n"
                 f"📋 Что можно делать:\n"
@@ -397,7 +411,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return ConversationHandler.END
     
-    debug_print("Пользователь не зарегистрирован, проверяем наличие супер-админов")
+    logger.info("Пользователь не зарегистрирован, проверяем наличие супер-админов")
     
     # Проверяем, есть ли в системе супер-администраторы
     cursor.execute("SELECT COUNT(*) FROM employees WHERE is_super_admin = 1")
@@ -405,7 +419,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if super_admin_count == 0:
         # Первый пользователь становится супер-администратором
-        debug_print("Первый пользователь - назначаем супер-админом")
+        logger.info("Первый пользователь - назначаем супер-админом")
         cursor.execute('''
             INSERT INTO employees (user_id, full_name, position, store, reg_date, is_admin, is_super_admin)
             VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -431,11 +445,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         stores_count = cursor.fetchone()[0]
         conn.close()
         
-        debug_print(f"Должностей: {positions_count}, Магазинов: {stores_count}")
+        logger.info(f"Должностей: {positions_count}, Магазинов: {stores_count}")
         
         if positions_count == 0 or stores_count == 0:
-            # Нет должностей или магазинов - предлагаем стать администратором
-            debug_print("Нет должностей или магазинов - предлагаем стать админом")
+            logger.info("Нет должностей или магазинов - предлагаем стать админом")
             keyboard = [
                 [InlineKeyboardButton("👑 Стать администратором", callback_data="request_admin")]
             ]
@@ -450,12 +463,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return ConversationHandler.END
         else:
             # Запрашиваем имя перед регистрацией
-            debug_print("Запрашиваем имя пользователя")
+            logger.info("Запрашиваем имя пользователя")
             await update.message.reply_text(
                 "📝 Для регистрации введите ваше ФИО (Имя Фамилия):\n"
                 "Например: Иван Иванов"
             )
-            debug_print(f"=== start завершена, возвращаем ENTER_FULL_NAME ({ENTER_FULL_NAME}) ===")
+            logger.info(f"🔥 start возвращает ENTER_FULL_NAME = {ENTER_FULL_NAME}")
             return ENTER_FULL_NAME
 
 async def checkin(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -693,7 +706,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
-# Основной обработчик callback-запросов
+# ИСПРАВЛЕНО: Основной обработчик callback-запросов с отладкой
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработка нажатий на инлайн кнопки"""
     query = update.callback_query
@@ -703,7 +716,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = query.from_user.id
     
     logger.info(f"Callback: {callback_data} от пользователя {user_id}")
-    debug_print(f"=== button_callback вызвана с callback_data: {callback_data} ===")
+    logger.info(f"Текущий user_data: {context.user_data}")
     
     # Обработка отмены регистрации
     if callback_data == "cancel_registration":
@@ -714,7 +727,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Обработка регистрации с именем
     if callback_data.startswith("reg_pos_"):
-        debug_print("Обработка выбора должности")
+        logger.info("🔥🔥🔥 Обработка выбора должности")
         
         if user:
             await query.edit_message_text("❌ Вы уже зарегистрированы!")
@@ -722,12 +735,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Получаем имя из user_data
         full_name = context.user_data.get('full_name')
-        debug_print(f"Получено имя из user_data: {full_name}")
+        logger.info(f"Получено имя из user_data: {full_name}")
         
         if not full_name:
             # Если нет имени, используем имя из Telegram
             full_name = query.from_user.full_name
-            debug_print(f"Имя не найдено, используем из Telegram: {full_name}")
+            logger.info(f"Имя не найдено, используем из Telegram: {full_name}")
             await query.edit_message_text(
                 f"⚠️ Внимание! Будет использовано имя из Telegram: {full_name}\n"
                 f"Если хотите изменить имя, начните регистрацию заново."
@@ -738,10 +751,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['reg_position'] = position
         context.user_data['full_name'] = full_name
         
-        debug_print(f"Выбрана должность: {position}")
+        logger.info(f"Выбрана должность: {position}")
         
         stores = get_stores()
-        debug_print(f"Получен список магазинов: {stores}")
+        logger.info(f"Получен список магазинов: {stores}")
         
         if not stores:
             await query.edit_message_text(
@@ -764,11 +777,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=reply_markup
         )
         
-        debug_print(f"=== button_callback возвращает SELECT_STORE ({SELECT_STORE}) ===")
+        logger.info(f"🔥 button_callback возвращает SELECT_STORE = {SELECT_STORE}")
         return SELECT_STORE
     
     elif callback_data.startswith("reg_store_"):
-        debug_print("Обработка выбора магазина")
+        logger.info("🔥🔥🔥 Обработка выбора магазина")
         
         if user:
             await query.edit_message_text("❌ Вы уже зарегистрированы!")
@@ -778,12 +791,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         position = context.user_data.get('reg_position')
         full_name = context.user_data.get('full_name')
         
-        debug_print(f"Выбран магазин: {store}")
-        debug_print(f"Должность из user_data: {position}")
-        debug_print(f"Имя из user_data: {full_name}")
+        logger.info(f"Выбран магазин: {store}")
+        logger.info(f"Должность из user_data: {position}")
+        logger.info(f"Имя из user_data: {full_name}")
         
         if not position:
-            debug_print("ОШИБКА: должность не найдена в user_data")
+            logger.error("ОШИБКА: должность не найдена в user_data")
             await query.edit_message_text(
                 "❌ Ошибка регистрации. Пожалуйста, начните заново с /start"
             )
@@ -791,7 +804,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if not full_name:
             full_name = query.from_user.full_name
-            debug_print(f"Имя не найдено, используем из Telegram: {full_name}")
+            logger.info(f"Имя не найдено, используем из Telegram: {full_name}")
         
         user_id = query.from_user.id
         
@@ -815,8 +828,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ''', (user_id, full_name, position, store, get_today_date_utc8(), 0, 0))
             conn.commit()
             
-            logger.info(f"Новый пользователь зарегистрирован: {user_id} - {full_name} ({position}, {store})")
-            debug_print(f"НОВЫЙ ПОЛЬЗОВАТЕЛЬ УСПЕШНО ЗАРЕГИСТРИРОВАН: {user_id} - {full_name}")
+            logger.info(f"✅✅✅ Новый пользователь зарегистрирован: {user_id} - {full_name} ({position}, {store})")
             
             await query.edit_message_text(
                 f"✅ Регистрация успешно завершена!\n\n"
@@ -836,8 +848,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             
         except Exception as e:
-            logger.error(f"Ошибка при регистрации: {e}")
-            debug_print(f"ОШИБКА при регистрации: {e}")
+            logger.error(f"ОШИБКА при регистрации: {e}")
             await query.edit_message_text(
                 "❌ Произошла ошибка при регистрации. Попробуйте позже."
             )
@@ -848,7 +859,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data.pop('reg_position', None)
         context.user_data.pop('full_name', None)
         
-        debug_print("=== Регистрация завершена, возвращаем ConversationHandler.END ===")
+        logger.info("🔥 Регистрация завершена, возвращаем ConversationHandler.END")
         return ConversationHandler.END
     
     # Для всех остальных callback_data проверяем авторизацию
@@ -3136,15 +3147,7 @@ async def main_async():
         
         app = Application.builder().token(BOT_TOKEN).build()
         
-        app.add_handler(CommandHandler("start", start))
-        app.add_handler(CommandHandler("checkin", checkin))
-        app.add_handler(CommandHandler("checkout", checkout))
-        app.add_handler(CommandHandler("timesheet", timesheet))
-        app.add_handler(CommandHandler("stats", stats))
-        app.add_handler(CommandHandler("admin", admin_panel))
-        app.add_handler(CommandHandler("cancel", cancel_registration))
-        
-        # ConversationHandler для регистрации с вводом имени
+        # ВАЖНО: СНАЧАЛА добавляем ConversationHandler
         reg_conv_handler = ConversationHandler(
             entry_points=[
                 CommandHandler("start", start),
@@ -3169,11 +3172,25 @@ async def main_async():
                 CommandHandler("cancel", cancel_registration),
                 CommandHandler("start", start)
             ],
+            name="registration_conversation",
+            persistent=False,
             allow_reentry=True,
             per_message=False
         )
         app.add_handler(reg_conv_handler)
         
+        # ПОТОМ остальные обработчики команд
+        app.add_handler(CommandHandler("checkin", checkin))
+        app.add_handler(CommandHandler("checkout", checkout))
+        app.add_handler(CommandHandler("timesheet", timesheet))
+        app.add_handler(CommandHandler("stats", stats))
+        app.add_handler(CommandHandler("admin", admin_panel))
+        app.add_handler(CommandHandler("cancel", cancel_registration))
+        
+        # ВРЕМЕННО для отладки (можно удалить позже)
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, debug_message), group=0)
+        
+        # Остальные ConversationHandler
         create_position_conv = ConversationHandler(
             entry_points=[CallbackQueryHandler(button_callback, pattern="^create_position$")],
             states={
@@ -3206,10 +3223,10 @@ async def main_async():
         )
         app.add_handler(custom_period_conv)
         
+        # Основной обработчик callback-запросов - ПОСЛЕДНИМ
         app.add_handler(CallbackQueryHandler(button_callback))
         
         logger.info("🚀 Bot started successfully")
-        debug_print("=== Бот запущен ===")
         
         await app.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
         
