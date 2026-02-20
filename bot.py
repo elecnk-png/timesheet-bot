@@ -884,26 +884,39 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif callback_data == "request_admin":
         await handle_admin_request(query, context, user_id, user)
     
-    # ИСПРАВЛЕНО: Добавлены обработчики для команд обычного пользователя в админке
+    # ИСПРАВЛЕНО: Обработчики для команд обычного пользователя в админке
     elif callback_data == "admin_checkin":
         logger.info(f"Выполняется admin_checkin для пользователя {user_id}")
-        await query.delete_message()
-        # Создаем новый update для вызова checkin
+        # Создаем новое сообщение для вызова checkin
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="/checkin"
+        )
+        # Вызываем функцию checkin
         await checkin(update, context)
     
     elif callback_data == "admin_checkout":
         logger.info(f"Выполняется admin_checkout для пользователя {user_id}")
-        await query.delete_message()
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="/checkout"
+        )
         await checkout(update, context)
     
     elif callback_data == "admin_timesheet":
         logger.info(f"Выполняется admin_timesheet для пользователя {user_id}")
-        await query.delete_message()
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="/timesheet"
+        )
         await timesheet(update, context)
     
     elif callback_data == "admin_stats":
         logger.info(f"Выполняется admin_stats для пользователя {user_id}")
-        await query.delete_message()
+        await context.bot.send_message(
+            chat_id=user_id,
+            text="/stats"
+        )
         await stats(update, context)
     
     elif callback_data == "admin_list":
