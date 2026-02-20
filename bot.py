@@ -465,20 +465,31 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.info(f"🔥 start возвращает ENTER_FULL_NAME = {ENTER_FULL_NAME}")
             return ENTER_FULL_NAME
 
+# ИСПРАВЛЕНО: Функция checkin с поддержкой callback
 async def checkin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отметка начала рабочего дня"""
     user_id = update.effective_user.id
     
     user = get_user(user_id)
     if not user:
-        await update.message.reply_text("❌ Сначала зарегистрируйтесь через /start")
+        # Определяем, откуда пришел вызов
+        if update.callback_query:
+            await update.callback_query.message.reply_text("❌ Сначала зарегистрируйтесь через /start")
+        else:
+            await update.message.reply_text("❌ Сначала зарегистрируйтесь через /start")
         return
     
     active_shift = get_active_shift(user_id)
     if active_shift:
-        await update.message.reply_text(
-            f"❌ У вас уже есть активная смена, начатая в {format_time_utc8(datetime.fromisoformat(active_shift[1]))}"
-        )
+        checkin_time = format_time_utc8(datetime.fromisoformat(active_shift[1]))
+        if update.callback_query:
+            await update.callback_query.message.reply_text(
+                f"❌ У вас уже есть активная смена, начатая в {checkin_time}"
+            )
+        else:
+            await update.message.reply_text(
+                f"❌ У вас уже есть активная смена, начатая в {checkin_time}"
+            )
         return
     
     now = get_now_utc8()
@@ -496,22 +507,35 @@ async def checkin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     result_message = f"✅ Начало смены отмечено в {format_time_utc8(now)}\n📅 Дата: {today}\nНе забудьте отметить конец смены командой /checkout"
     
-    await update.message.reply_text(result_message)
+    # Отправляем результат в зависимости от источника вызова
+    if update.callback_query:
+        await update.callback_query.message.reply_text(result_message)
+    else:
+        await update.message.reply_text(result_message)
 
+# ИСПРАВЛЕНО: Функция checkout с поддержкой callback
 async def checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отметка конца рабочего дня"""
     user_id = update.effective_user.id
     
     user = get_user(user_id)
     if not user:
-        await update.message.reply_text("❌ Сначала зарегистрируйтесь через /start")
+        if update.callback_query:
+            await update.callback_query.message.reply_text("❌ Сначала зарегистрируйтесь через /start")
+        else:
+            await update.message.reply_text("❌ Сначала зарегистрируйтесь через /start")
         return
     
     active_shift = get_active_shift(user_id)
     if not active_shift:
-        await update.message.reply_text(
-            "❌ У вас нет активной смены. Используйте /checkin для начала смены"
-        )
+        if update.callback_query:
+            await update.callback_query.message.reply_text(
+                "❌ У вас нет активной смены. Используйте /checkin для начала смены"
+            )
+        else:
+            await update.message.reply_text(
+                "❌ У вас нет активной смены. Используйте /checkin для начала смены"
+            )
         return
     
     shift_id, checkin_time_str = active_shift
@@ -532,15 +556,22 @@ async def checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     result_message = f"✅ Конец смены отмечен в {format_time_utc8(checkout_time)}\n⏱ Отработано часов: {hours_worked:.2f}"
     
-    await update.message.reply_text(result_message)
+    if update.callback_query:
+        await update.callback_query.message.reply_text(result_message)
+    else:
+        await update.message.reply_text(result_message)
 
+# ИСПРАВЛЕНО: Функция timesheet с поддержкой callback
 async def timesheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Просмотр табеля за указанный период"""
     user_id = update.effective_user.id
     
     user = get_user(user_id)
     if not user:
-        await update.message.reply_text("❌ Сначала зарегистрируйтесь через /start")
+        if update.callback_query:
+            await update.callback_query.message.reply_text("❌ Сначала зарегистрируйтесь через /start")
+        else:
+            await update.message.reply_text("❌ Сначала зарегистрируйтесь через /start")
         return
     
     args = context.args
@@ -564,7 +595,10 @@ async def timesheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
     
     if not records:
-        await update.message.reply_text(f"📊 Нет записей за последние {days} дней")
+        if update.callback_query:
+            await update.callback_query.message.reply_text(f"📊 Нет записей за последние {days} дней")
+        else:
+            await update.message.reply_text(f"📊 Нет записей за последние {days} дней")
         return
     
     report = f"📋 ТАБЕЛЬ ЗА {days} ДНЕЙ\n\n"
@@ -590,15 +624,22 @@ async def timesheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     report += f"📊 ИТОГО: {total_hours:.2f} часов"
     
-    await update.message.reply_text(report)
+    if update.callback_query:
+        await update.callback_query.message.reply_text(report)
+    else:
+        await update.message.reply_text(report)
 
+# ИСПРАВЛЕНО: Функция stats с поддержкой callback
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Статистика за 30 дней по дням недели"""
     user_id = update.effective_user.id
     
     user = get_user(user_id)
     if not user:
-        await update.message.reply_text("❌ Сначала зарегистрируйтесь через /start")
+        if update.callback_query:
+            await update.callback_query.message.reply_text("❌ Сначала зарегистрируйтесь через /start")
+        else:
+            await update.message.reply_text("❌ Сначала зарегистрируйтесь через /start")
         return
     
     end_date = get_today_date_utc8()
@@ -615,7 +656,10 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
     
     if not records:
-        await update.message.reply_text("📊 Нет данных за последние 30 дней")
+        if update.callback_query:
+            await update.callback_query.message.reply_text("📊 Нет данных за последние 30 дней")
+        else:
+            await update.message.reply_text("📊 Нет данных за последние 30 дней")
         return
     
     day_stats = {
@@ -657,7 +701,10 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     report += f"📈 Всего часов: {total_hours:.2f}\n"
     report += f"📈 Среднее: {total_hours/total_days:.2f} ч/день"
     
-    await update.message.reply_text(report)
+    if update.callback_query:
+        await update.callback_query.message.reply_text(report)
+    else:
+        await update.message.reply_text(report)
 
 @require_auth(admin_only=True)
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -884,7 +931,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ИСПРАВЛЕНО: Обработчики для команд обычного пользователя в админке
     elif callback_data == "admin_checkin":
         logger.info(f"Выполняется admin_checkin для пользователя {user_id}")
-        # Вызываем функцию checkin напрямую
+        # Вызываем функцию checkin, которая теперь поддерживает callback
         await checkin(update, context)
     
     elif callback_data == "admin_checkout":
