@@ -1103,6 +1103,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("❌ Недостаточно прав")
             return
         store_name = callback_data[17:]
+        # Убираем подчеркивание в начале если оно есть
+        if store_name.startswith('_'):
+            store_name = store_name[1:]
         logger.info(f"Запрос на удаление магазина: {store_name}")
         await delete_store(query, store_name)
     
@@ -1202,6 +1205,10 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         store_name = callback_data[20:]
         logger.info(f"Получено название магазина для удаления: {store_name}")
+        # Убираем подчеркивание в начале если оно есть
+        if store_name.startswith('_'):
+            store_name = store_name[1:]
+            logger.info(f"Название после удаления подчеркивания: {store_name}")
         await create_delete_request(query, user_id, full_name, "store", store_name)
     
     elif callback_data == "admin_requests":
@@ -2738,6 +2745,7 @@ async def show_delete_store_request_menu(query):
     else:
         await query.edit_message_text(text, reply_markup=reply_markup)
 
+# ИСПРАВЛЕНО: Функция для создания запроса на удаление
 async def create_delete_request(query, requester_id, requester_name, target_type, target_id):
     """Создание запроса на удаление"""
     # Проверяем, нет ли уже активного запроса
@@ -2788,6 +2796,7 @@ async def create_delete_request(query, requester_id, requester_name, target_type
     super_admins = get_super_admins()
     for admin_id, admin_name in super_admins:
         try:
+            # Используем query.message.bot для отправки
             await query.message.bot.send_message(
                 admin_id,
                 f"🔔 Новый запрос на удаление!\n\n"
