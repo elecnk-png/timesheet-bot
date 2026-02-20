@@ -1170,15 +1170,29 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif callback_data.startswith("request_delete_employee_"):
         if not (is_admin or is_super_admin):
             return
-        # Извлекаем ID из строки, убирая префикс
+        # Извлекаем ID из строки, убирая префикс "request_delete_employee_"
         target_id_str = callback_data[23:]
+        logger.info(f"Получен ID сотрудника для удаления: {target_id_str}")
+        
         try:
+            # Пробуем преобразовать в число
             target_id = int(target_id_str)
-            logger.info(f"Запрос на удаление сотрудника с ID: {target_id}")
+            logger.info(f"Успешное преобразование ID: {target_id}")
             await create_delete_request(query, user_id, full_name, "employee", str(target_id))
         except ValueError as e:
             logger.error(f"Ошибка преобразования ID: {target_id_str} - {e}")
-            await query.edit_message_text("❌ Ошибка в идентификаторе сотрудника")
+            # Пробуем другой способ - убираем подчеркивание в начале
+            if target_id_str.startswith('_'):
+                target_id_str = target_id_str[1:]
+                try:
+                    target_id = int(target_id_str)
+                    logger.info(f"Успешное преобразование после удаления подчеркивания: {target_id}")
+                    await create_delete_request(query, user_id, full_name, "employee", str(target_id))
+                except ValueError as e2:
+                    logger.error(f"Ошибка преобразования после удаления подчеркивания: {e2}")
+                    await query.edit_message_text("❌ Ошибка в идентификаторе сотрудника")
+            else:
+                await query.edit_message_text("❌ Ошибка в идентификаторе сотрудника")
     
     elif callback_data.startswith("request_delete_store_"):
         if not (is_admin or is_super_admin):
