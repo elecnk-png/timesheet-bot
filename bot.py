@@ -1097,11 +1097,13 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         await show_delete_store_menu(query)
     
+    # ИСПРАВЛЕНО: Обработчик для удаления магазина из меню управления
     elif callback_data.startswith("delete_store_list_"):
         if not (is_admin or is_super_admin):
             await query.edit_message_text("❌ Недостаточно прав")
             return
         store_name = callback_data[17:]
+        logger.info(f"Запрос на удаление магазина: {store_name}")
         await delete_store(query, store_name)
     
     elif callback_data == "confirm_today":
@@ -1194,10 +1196,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await query.edit_message_text("❌ Ошибка в идентификаторе сотрудника")
     
+    # ИСПРАВЛЕНО: Обработчик для запроса удаления магазина
     elif callback_data.startswith("request_delete_store_"):
         if not (is_admin or is_super_admin):
             return
         store_name = callback_data[20:]
+        logger.info(f"Получено название магазина для удаления: {store_name}")
         await create_delete_request(query, user_id, full_name, "store", store_name)
     
     elif callback_data == "admin_requests":
@@ -2114,6 +2118,7 @@ async def list_stores(query):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
 
+# ИСПРАВЛЕНО: Функция для отображения меню удаления магазинов
 async def show_delete_store_menu(query):
     """Меню удаления магазинов"""
     stores = get_stores()
@@ -2122,39 +2127,57 @@ async def show_delete_store_menu(query):
         await query.edit_message_text("🏪 Нет магазинов для удаления")
         return
     
+    # Получаем информацию о том, какие магазины используются
+    conn = sqlite3.connect('timesheet.db')
+    cursor = conn.cursor()
+    
+    text = "🗑 ВЫБОР МАГАЗИНА ДЛЯ УДАЛЕНИЯ\n\n"
+    text += "❌ - нельзя удалить (есть сотрудники)\n"
+    text += "✅ - можно удалить\n\n"
+    
     keyboard = []
     for store_name, address in stores:
-        conn = sqlite3.connect('timesheet.db')
-        cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM employees WHERE store = ?", (store_name,))
         count = cursor.fetchone()[0]
-        conn.close()
         
         if count == 0:
+            # Магазин не используется - можно удалить
+            text += f"✅ {store_name}\n"
+            text += f"   📍 {address}\n\n"
             keyboard.append([
                 InlineKeyboardButton(f"🗑 {store_name}", callback_data=f"delete_store_list_{store_name}")
             ])
+        else:
+            # Магазин используется - нельзя удалить
+            text += f"❌ {store_name} (используется {count} сотрудниками)\n"
+            text += f"   📍 {address}\n\n"
+    
+    conn.close()
     
     if not keyboard:
-        await query.edit_message_text(
-            "❌ Нет магазинов, которые можно удалить\n"
-            "(во всех магазинах есть сотрудники)"
-        )
-        return
+        text += "\n❌ Нет магазинов, которые можно удалить\n(во всех магазинах есть сотрудники)"
     
     keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="admin_stores_menu")])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text(
-        "🗑 Выберите магазин для удаления:",
-        reply_markup=reply_markup
-    )
+    
+    if len(text) > MAX_MESSAGE_LENGTH:
+        await query.edit_message_text(text[:MAX_MESSAGE_LENGTH])
+        remaining = text[MAX_MESSAGE_LENGTH:]
+        while remaining:
+            await query.message.reply_text(remaining[:MAX_MESSAGE_LENGTH])
+            remaining = remaining[MAX_MESSAGE_LENGTH:]
+        await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
+    else:
+        await query.edit_message_text(text, reply_markup=reply_markup)
 
+# ИСПРАВЛЕНО: Функция для удаления магазина
 async def delete_store(query, store_name):
     """Удаление магазина"""
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     
+    # Проверяем, используется ли магазин
     cursor.execute("SELECT COUNT(*) FROM employees WHERE store = ?", (store_name,))
     count = cursor.fetchone()[0]
     
@@ -2166,6 +2189,7 @@ async def delete_store(query, store_name):
         conn.close()
         return
     
+    # Удаляем магазин
     cursor.execute("DELETE FROM stores WHERE name = ?", (store_name,))
     conn.commit()
     conn.close()
@@ -2661,6 +2685,7 @@ async def show_delete_employee_menu(query):
     else:
         await query.edit_message_text(text, reply_markup=reply_markup)
 
+# ИСПРАВЛЕНО: Функция для отображения меню выбора магазина для удаления
 async def show_delete_store_request_menu(query):
     """Меню выбора магазина для удаления"""
     stores = get_stores()
@@ -2669,20 +2694,49 @@ async def show_delete_store_request_menu(query):
         await query.edit_message_text("🏪 Нет магазинов для удаления")
         return
     
-    text = "🏪 ВЫБОР МАГАЗИНА ДЛЯ УДАЛЕНИЯ\n\n"
-    for name, address in stores:
-        text += f"• {name}\n  📍 {address}\n\n"
+    # Получаем информацию о том, какие магазины используются
+    conn = sqlite3.connect('timesheet.db')
+    cursor = conn.cursor()
+    
+    text = "🏪 ВЫБОР МАГАЗИНА ДЛЯ ЗАПРОСА УДАЛЕНИЯ\n\n"
+    text += "❌ - нельзя удалить (есть сотрудники)\n"
+    text += "✅ - можно удалить\n\n"
     
     keyboard = []
-    for name, address in stores:
-        keyboard.append([
-            InlineKeyboardButton(f"🗑 {name}", callback_data=f"request_delete_store_{name}")
-        ])
+    for store_name, address in stores:
+        cursor.execute("SELECT COUNT(*) FROM employees WHERE store = ?", (store_name,))
+        count = cursor.fetchone()[0]
+        
+        if count == 0:
+            # Магазин не используется - можно запросить удаление
+            text += f"✅ {store_name}\n"
+            text += f"   📍 {address}\n\n"
+            keyboard.append([
+                InlineKeyboardButton(f"🗑 {store_name}", callback_data=f"request_delete_store_{store_name}")
+            ])
+        else:
+            # Магазин используется - нельзя удалить
+            text += f"❌ {store_name} (используется {count} сотрудниками)\n"
+            text += f"   📍 {address}\n\n"
+    
+    conn.close()
+    
+    if not keyboard:
+        text += "\n❌ Нет магазинов, для которых можно запросить удаление\n(во всех магазинах есть сотрудники)"
     
     keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="admin_delete_menu")])
     
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text(text, reply_markup=reply_markup)
+    
+    if len(text) > MAX_MESSAGE_LENGTH:
+        await query.edit_message_text(text[:MAX_MESSAGE_LENGTH])
+        remaining = text[MAX_MESSAGE_LENGTH:]
+        while remaining:
+            await query.message.reply_text(remaining[:MAX_MESSAGE_LENGTH])
+            remaining = remaining[MAX_MESSAGE_LENGTH:]
+        await query.message.reply_text("Выберите магазин:", reply_markup=reply_markup)
+    else:
+        await query.edit_message_text(text, reply_markup=reply_markup)
 
 async def create_delete_request(query, requester_id, requester_name, target_type, target_id):
     """Создание запроса на удаление"""
