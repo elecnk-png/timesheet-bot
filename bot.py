@@ -276,6 +276,40 @@ def get_super_admins() -> List[Tuple[int, str]]:
     conn.close()
     return result
 
+# Функция для создания клавиатуры обычного пользователя
+def get_user_keyboard(can_request_admin: bool = False) -> ReplyKeyboardMarkup:
+    """Создать клавиатуру для обычного пользователя"""
+    keyboard = [
+        [KeyboardButton("✅ /checkin"), KeyboardButton("✅ /checkout")],
+        [KeyboardButton("📊 /timesheet"), KeyboardButton("📈 /stats")],
+        [KeyboardButton("🏠 /start"), KeyboardButton("👑 /admin")]
+    ]
+    if can_request_admin:
+        keyboard.append([KeyboardButton("👑 Запросить права администратора")])
+    
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
+# Функция для создания клавиатуры администратора
+def get_admin_keyboard(is_super_admin: bool = False) -> ReplyKeyboardMarkup:
+    """Создать клавиатуру для администратора"""
+    keyboard = [
+        [KeyboardButton("✅ /checkin"), KeyboardButton("✅ /checkout")],
+        [KeyboardButton("📊 /timesheet"), KeyboardButton("📈 /stats")],
+        [KeyboardButton("🏠 /start"), KeyboardButton("👑 /admin")],
+        [KeyboardButton("👥 Все сотрудники"), KeyboardButton("📊 По магазинам")],
+        [KeyboardButton("📅 Выбрать период"), KeyboardButton("📈 Статистика")],
+        [KeyboardButton("✅ Подтверждение смен"), KeyboardButton("🗑 Запросить удаление")],
+        [KeyboardButton("📋 Управление должностями"), KeyboardButton("🏪 Управление магазинами")]
+    ]
+    
+    if is_super_admin:
+        keyboard.extend([
+            [KeyboardButton("➕ Добавить админа"), KeyboardButton("📋 Запросы на удаление")],
+            [KeyboardButton("👑 Заявки в админы"), KeyboardButton("⭐ Управление супер-админами")]
+        ])
+    
+    return ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+
 # Функция для отмены регистрации
 async def cancel_registration(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отмена регистрации"""
@@ -374,33 +408,27 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"Пользователь уже зарегистрирован: is_admin={is_admin}, is_super_admin={is_super_admin}")
         
         if is_super_admin:
+            keyboard = get_admin_keyboard(is_super_admin=True)
             await update.message.reply_text(
                 f"👋 С возвращением, {stored_name}!\n"
                 f"Ваш статус: ⭐ Супер-администратор\n"
-                f"Используйте /admin для входа в панель управления."
+                f"Используйте кнопки ниже для навигации:",
+                reply_markup=keyboard
             )
         elif is_admin:
+            keyboard = get_admin_keyboard(is_super_admin=False)
             await update.message.reply_text(
                 f"👋 С возвращением, {stored_name}!\n"
                 f"Ваш статус: 👑 Администратор\n"
-                f"Используйте /admin для входа в панель управления."
+                f"Используйте кнопки ниже для навигации:",
+                reply_markup=keyboard
             )
         else:
-            # Для обычных сотрудников показываем разные кнопки в зависимости от возможности запросить админку
-            keyboard = []
-            if can_request_admin:
-                keyboard.append([KeyboardButton("👑 Запросить права администратора")])
-            
-            reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True) if keyboard else None
-            
+            keyboard = get_user_keyboard(can_request_admin)
             await update.message.reply_text(
                 f"👋 Привет, {stored_name}!\n\n"
-                f"📋 Что можно делать:\n"
-                f"✅ /checkin - отметить начало рабочего дня\n"
-                f"✅ /checkout - отметить конец рабочего дня\n"
-                f"📊 /timesheet - посмотреть свой табель\n"
-                f"📈 /stats - статистика за 30 дней",
-                reply_markup=reply_markup
+                f"📋 Используйте кнопки ниже для работы:",
+                reply_markup=keyboard
             )
         return ConversationHandler.END
     
@@ -421,13 +449,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.commit()
         conn.close()
         
+        keyboard = get_admin_keyboard(is_super_admin=True)
         await update.message.reply_text(
             "🎉 Вы зарегистрированы как первый супер-администратор!\n\n"
             "⚠️ Важно: Сейчас в системе нет должностей и магазинов.\n"
-            "1️⃣ Используйте /admin для входа в панель администратора\n"
+            "1️⃣ Используйте кнопку 👑 /admin для входа в панель администратора\n"
             "2️⃣ Создайте должности в разделе 'Управление должностями'\n"
             "3️⃣ Создайте магазины в разделе 'Управление магазинами'\n\n"
-            "Только после этого другие сотрудники смогут регистрироваться."
+            "Только после этого другие сотрудники смогут регистрироваться.",
+            reply_markup=keyboard
         )
         return ConversationHandler.END
     else:
@@ -883,20 +913,12 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             
             # Создаем клавиатуру для обычного сотрудника
-            keyboard = []
-            if can_request_admin:
-                keyboard.append([KeyboardButton("👑 Запросить права администратора")])
-            
-            reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True) if keyboard else None
+            keyboard = get_user_keyboard(can_request_admin)
             
             await query.message.reply_text(
                 f"👋 Привет, {full_name}!\n\n"
-                f"📋 Что можно делать:\n"
-                f"✅ /checkin - отметить начало рабочего дня\n"
-                f"✅ /checkout - отметить конец рабочего дня\n"
-                f"📊 /timesheet - посмотреть свой табель\n"
-                f"📈 /stats - статистика за 30 дней",
-                reply_markup=reply_markup
+                f"📋 Используйте кнопки ниже для работы:",
+                reply_markup=keyboard
             )
             
         except Exception as e:
@@ -928,10 +950,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif callback_data == "request_admin":
         await handle_admin_request(query, context, user_id, user)
     
-    # ИСПРАВЛЕНО: Обработчики для команд обычного пользователя в админке
+    # Обработчики для команд обычного пользователя в админке
     elif callback_data == "admin_checkin":
         logger.info(f"Выполняется admin_checkin для пользователя {user_id}")
-        # Вызываем функцию checkin, которая теперь поддерживает callback
         await checkin(update, context)
     
     elif callback_data == "admin_checkout":
@@ -1306,8 +1327,178 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"Пользователь в состоянии {context.user_data['conversation_state']}, пропускаем обработку")
         return
     
+    # Обработка кнопок из нижнего меню
+    if text == "🏠 /start":
+        await start(update, context)
+        return
+    elif text == "👑 /admin":
+        # Проверяем, есть ли права администратора
+        user = get_user(user_id)
+        if user and (user[3] or user[4]):  # is_admin или is_super_admin
+            await admin_panel(update, context)
+        else:
+            await update.message.reply_text("❌ У вас нет прав доступа к панели администратора")
+        return
+    elif text == "✅ /checkin":
+        await checkin(update, context)
+        return
+    elif text == "✅ /checkout":
+        await checkout(update, context)
+        return
+    elif text == "📊 /timesheet":
+        await timesheet(update, context)
+        return
+    elif text == "📈 /stats":
+        await stats(update, context)
+        return
+    elif text == "👥 Все сотрудники":
+        user = get_user(user_id)
+        if user and (user[3] or user[4]):
+            # Создаем временный callback query для вызова функции
+            query = type('Query', (), {
+                'data': 'admin_list',
+                'from_user': update.effective_user,
+                'message': update.message,
+                'answer': lambda: None,
+                'edit_message_text': lambda text, reply_markup=None: None
+            })()
+            await show_all_employees(query)
+        return
+    elif text == "📊 По магазинам":
+        user = get_user(user_id)
+        if user and (user[3] or user[4]):
+            query = type('Query', (), {
+                'data': 'admin_by_store',
+                'from_user': update.effective_user,
+                'message': update.message,
+                'answer': lambda: None,
+                'edit_message_text': lambda text, reply_markup=None: None
+            })()
+            await show_employees_by_store(query)
+        return
+    elif text == "📅 Выбрать период":
+        user = get_user(user_id)
+        if user and (user[3] or user[4]):
+            query = type('Query', (), {
+                'data': 'period_selection',
+                'from_user': update.effective_user,
+                'message': update.message,
+                'answer': lambda: None,
+                'edit_message_text': lambda text, reply_markup=None: None
+            })()
+            await show_period_selection(query)
+        return
+    elif text == "📈 Статистика":
+        user = get_user(user_id)
+        if user and (user[3] or user[4]):
+            query = type('Query', (), {
+                'data': 'admin_store_stats',
+                'from_user': update.effective_user,
+                'message': update.message,
+                'answer': lambda: None,
+                'edit_message_text': lambda text, reply_markup=None: None
+            })()
+            await show_store_stats(query)
+        return
+    elif text == "✅ Подтверждение смен":
+        user = get_user(user_id)
+        if user and (user[3] or user[4]):
+            query = type('Query', (), {
+                'data': 'admin_confirm',
+                'from_user': update.effective_user,
+                'message': update.message,
+                'answer': lambda: None,
+                'edit_message_text': lambda text, reply_markup=None: None
+            })()
+            await show_confirm_menu(query)
+        return
+    elif text == "🗑 Запросить удаление":
+        user = get_user(user_id)
+        if user and (user[3] or user[4]):
+            query = type('Query', (), {
+                'data': 'admin_delete_menu',
+                'from_user': update.effective_user,
+                'message': update.message,
+                'answer': lambda: None,
+                'edit_message_text': lambda text, reply_markup=None: None
+            })()
+            await show_delete_menu(query)
+        return
+    elif text == "📋 Управление должностями":
+        user = get_user(user_id)
+        if user and (user[3] or user[4]):
+            query = type('Query', (), {
+                'data': 'admin_positions_menu',
+                'from_user': update.effective_user,
+                'message': update.message,
+                'answer': lambda: None,
+                'edit_message_text': lambda text, reply_markup=None: None
+            })()
+            await show_positions_menu(query)
+        return
+    elif text == "🏪 Управление магазинами":
+        user = get_user(user_id)
+        if user and (user[3] or user[4]):
+            query = type('Query', (), {
+                'data': 'admin_stores_menu',
+                'from_user': update.effective_user,
+                'message': update.message,
+                'answer': lambda: None,
+                'edit_message_text': lambda text, reply_markup=None: None
+            })()
+            await show_stores_menu(query)
+        return
+    elif text == "➕ Добавить админа":
+        user = get_user(user_id)
+        if user and user[4]:  # is_super_admin
+            query = type('Query', (), {
+                'data': 'admin_add',
+                'from_user': update.effective_user,
+                'message': update.message,
+                'answer': lambda: None,
+                'edit_message_text': lambda text, reply_markup=None: None
+            })()
+            await show_add_admin_menu(query)
+        return
+    elif text == "📋 Запросы на удаление":
+        user = get_user(user_id)
+        if user and user[4]:  # is_super_admin
+            query = type('Query', (), {
+                'data': 'admin_requests',
+                'from_user': update.effective_user,
+                'message': update.message,
+                'answer': lambda: None,
+                'edit_message_text': lambda text, reply_markup=None: None
+            })()
+            await show_delete_requests(query)
+        return
+    elif text == "👑 Заявки в админы":
+        user = get_user(user_id)
+        if user and user[4]:  # is_super_admin
+            query = type('Query', (), {
+                'data': 'admin_admin_requests',
+                'from_user': update.effective_user,
+                'message': update.message,
+                'answer': lambda: None,
+                'edit_message_text': lambda text, reply_markup=None: None
+            })()
+            await show_admin_requests(query)
+        return
+    elif text == "⭐ Управление супер-админами":
+        user = get_user(user_id)
+        if user and user[4]:  # is_super_admin
+            query = type('Query', (), {
+                'data': 'assign_super_admin_menu',
+                'from_user': update.effective_user,
+                'message': update.message,
+                'answer': lambda: None,
+                'edit_message_text': lambda text, reply_markup=None: None
+            })()
+            await show_assign_super_admin_menu(query)
+        return
+    
     # Обработка кнопки запроса админки
-    if text == "👑 Запросить права администратора":
+    elif text == "👑 Запросить права администратора":
         user = get_user(user_id)
         if not user:
             await update.message.reply_text("❌ Сначала зарегистрируйтесь через /start")
@@ -3212,7 +3403,7 @@ async def main():
         app.add_handler(CommandHandler("admin", admin_panel))
         app.add_handler(CommandHandler("cancel", cancel_registration))
         
-        # Обработчик текстовых сообщений (только для кнопки запроса админки)
+        # Обработчик текстовых сообщений (для кнопок из нижнего меню и запроса админки)
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
         
         # Обработчик callback-запросов
