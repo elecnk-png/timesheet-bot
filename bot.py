@@ -280,9 +280,9 @@ def get_super_admins() -> List[Tuple[int, str]]:
 def get_user_keyboard(can_request_admin: bool = False) -> ReplyKeyboardMarkup:
     """Создать клавиатуру для обычного пользователя"""
     keyboard = [
-        [KeyboardButton("✅ /checkin"), KeyboardButton("✅ /checkout")],
-        [KeyboardButton("📊 /timesheet"), KeyboardButton("📈 /stats")],
-        [KeyboardButton("🏠 /start"), KeyboardButton("👑 /admin")]
+        [KeyboardButton("✅ Открыть смену"), KeyboardButton("✅ Закрыть смену")],
+        [KeyboardButton("📊 Мой табель"), KeyboardButton("📈 Моя статистика")],
+        [KeyboardButton("🏠 Главное меню"), KeyboardButton("👑 Панель админа")]
     ]
     if can_request_admin:
         keyboard.append([KeyboardButton("👑 Запросить права администратора")])
@@ -293,9 +293,9 @@ def get_user_keyboard(can_request_admin: bool = False) -> ReplyKeyboardMarkup:
 def get_admin_keyboard(is_super_admin: bool = False) -> ReplyKeyboardMarkup:
     """Создать клавиатуру для администратора"""
     keyboard = [
-        [KeyboardButton("✅ /checkin"), KeyboardButton("✅ /checkout")],
-        [KeyboardButton("📊 /timesheet"), KeyboardButton("📈 /stats")],
-        [KeyboardButton("🏠 /start"), KeyboardButton("👑 /admin")],
+        [KeyboardButton("✅ Открыть смену"), KeyboardButton("✅ Закрыть смену")],
+        [KeyboardButton("📊 Мой табель"), KeyboardButton("📈 Моя статистика")],
+        [KeyboardButton("🏠 Главное меню"), KeyboardButton("👑 Панель админа")],
         [KeyboardButton("👥 Все сотрудники"), KeyboardButton("📊 По магазинам")],
         [KeyboardButton("📅 Выбрать период"), KeyboardButton("📈 Статистика")],
         [KeyboardButton("✅ Подтверждение смен"), KeyboardButton("🗑 Запросить удаление")],
@@ -453,7 +453,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             "🎉 Вы зарегистрированы как первый супер-администратор!\n\n"
             "⚠️ Важно: Сейчас в системе нет должностей и магазинов.\n"
-            "1️⃣ Используйте кнопку 👑 /admin для входа в панель администратора\n"
+            "1️⃣ Используйте кнопку 👑 Панель админа для входа в панель администратора\n"
             "2️⃣ Создайте должности в разделе 'Управление должностями'\n"
             "3️⃣ Создайте магазины в разделе 'Управление магазинами'\n\n"
             "Только после этого другие сотрудники смогут регистрироваться.",
@@ -535,7 +535,7 @@ async def checkin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.commit()
     conn.close()
     
-    result_message = f"✅ Начало смены отмечено в {format_time_utc8(now)}\n📅 Дата: {today}\nНе забудьте отметить конец смены командой /checkout"
+    result_message = f"✅ Начало смены отмечено в {format_time_utc8(now)}\n📅 Дата: {today}\nНе забудьте закрыть смену"
     
     # Отправляем результат в зависимости от источника вызова
     if update.callback_query:
@@ -560,11 +560,11 @@ async def checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not active_shift:
         if update.callback_query:
             await update.callback_query.message.reply_text(
-                "❌ У вас нет активной смены. Используйте /checkin для начала смены"
+                "❌ У вас нет активной смены. Используйте открытие смены"
             )
         else:
             await update.message.reply_text(
-                "❌ У вас нет активной смены. Используйте /checkin для начала смены"
+                "❌ У вас нет активной смены. Используйте открытие смены"
             )
         return
     
@@ -745,10 +745,10 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Добавляем пункты меню обычного пользователя
     keyboard = [
-        [InlineKeyboardButton("✅ /checkin - начало смены", callback_data="admin_checkin")],
-        [InlineKeyboardButton("✅ /checkout - конец смены", callback_data="admin_checkout")],
-        [InlineKeyboardButton("📊 /timesheet - мой табель", callback_data="admin_timesheet")],
-        [InlineKeyboardButton("📈 /stats - моя статистика", callback_data="admin_stats")],
+        [InlineKeyboardButton("✅ Открыть смену", callback_data="admin_checkin")],
+        [InlineKeyboardButton("✅ Закрыть смену", callback_data="admin_checkout")],
+        [InlineKeyboardButton("📊 Мой табель", callback_data="admin_timesheet")],
+        [InlineKeyboardButton("📈 Моя статистика", callback_data="admin_stats")],
         [InlineKeyboardButton("👥 Все сотрудники", callback_data="admin_list")],
         [InlineKeyboardButton("📊 По магазинам", callback_data="admin_by_store")],
         [InlineKeyboardButton("📅 Выбрать период", callback_data="period_selection")],
@@ -1298,7 +1298,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await query.message.bot.send_message(
                     target_id,
                     f"👑 Поздравляем! Вы назначены администратором!\n\n"
-                    f"Теперь вам доступна панель администратора (/admin)."
+                    f"Теперь вам доступна панель администратора."
                 )
             except Exception as e:
                 logger.error(f"Failed to notify new admin {target_id}: {e}")
@@ -1328,10 +1328,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     # Обработка кнопок из нижнего меню
-    if text == "🏠 /start":
+    if text == "🏠 Главное меню":
         await start(update, context)
         return
-    elif text == "👑 /admin":
+    elif text == "👑 Панель админа":
         # Проверяем, есть ли права администратора
         user = get_user(user_id)
         if user and (user[3] or user[4]):  # is_admin или is_super_admin
@@ -1339,16 +1339,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("❌ У вас нет прав доступа к панели администратора")
         return
-    elif text == "✅ /checkin":
+    elif text == "✅ Открыть смену":
         await checkin(update, context)
         return
-    elif text == "✅ /checkout":
+    elif text == "✅ Закрыть смену":
         await checkout(update, context)
         return
-    elif text == "📊 /timesheet":
+    elif text == "📊 Мой табель":
         await timesheet(update, context)
         return
-    elif text == "📈 /stats":
+    elif text == "📈 Моя статистика":
         await stats(update, context)
         return
     elif text == "👥 Все сотрудники":
@@ -1565,7 +1565,7 @@ async def handle_admin_request_from_message(update: Update, context: ContextType
                 f"Должность: {position}\n"
                 f"Магазин: {store}\n"
                 f"ID: {user_id}\n\n"
-                f"Используйте /admin для рассмотрения заявки."
+                f"Используйте 👑 Панель админа для рассмотрения заявки."
             )
         except Exception as e:
             logger.error(f"Failed to notify super admin {admin_id}: {e}")
@@ -1574,10 +1574,10 @@ async def handle_admin_request_from_message(update: Update, context: ContextType
 async def show_admin_panel(query):
     """Показать панель администратора"""
     keyboard = [
-        [InlineKeyboardButton("✅ /checkin - начало смены", callback_data="admin_checkin")],
-        [InlineKeyboardButton("✅ /checkout - конец смены", callback_data="admin_checkout")],
-        [InlineKeyboardButton("📊 /timesheet - мой табель", callback_data="admin_timesheet")],
-        [InlineKeyboardButton("📈 /stats - моя статистика", callback_data="admin_stats")],
+        [InlineKeyboardButton("✅ Открыть смену", callback_data="admin_checkin")],
+        [InlineKeyboardButton("✅ Закрыть смену", callback_data="admin_checkout")],
+        [InlineKeyboardButton("📊 Мой табель", callback_data="admin_timesheet")],
+        [InlineKeyboardButton("📈 Моя статистика", callback_data="admin_stats")],
         [InlineKeyboardButton("👥 Все сотрудники", callback_data="admin_list")],
         [InlineKeyboardButton("📊 По магазинам", callback_data="admin_by_store")],
         [InlineKeyboardButton("📅 Выбрать период", callback_data="period_selection")],
@@ -2687,7 +2687,7 @@ async def create_delete_request(query, requester_id, requester_name, target_type
                 f"От: {requester_name}\n"
                 f"Тип: {target_type}\n"
                 f"Цель: {target_name}\n\n"
-                f"Используйте /admin для рассмотрения запроса."
+                f"Используйте 👑 Панель админа для рассмотрения запроса."
             )
         except Exception as e:
             logger.error(f"Failed to notify super admin {admin_id}: {e}")
@@ -2925,7 +2925,7 @@ async def handle_admin_request(query, context, user_id, user_info):
                 f"Должность: {position}\n"
                 f"Магазин: {store}\n"
                 f"ID: {user_id}\n\n"
-                f"Используйте /admin для рассмотрения заявки."
+                f"Используйте 👑 Панель админа для рассмотрения заявки."
             )
         except Exception as e:
             logger.error(f"Failed to notify super admin {admin_id}: {e}")
@@ -3062,8 +3062,7 @@ async def approve_admin_request(query, request_id):
         await query.message.bot.send_message(
             user_id,
             f"✅ Поздравляем! Ваша заявка на становление администратором одобрена!\n\n"
-            f"Теперь вам доступна панель администратора (/admin).\n"
-            f"Рекомендуем создать должности и магазины для начала работы."
+            f"Теперь вам доступна панель администратора."
         )
     except Exception as e:
         logger.error(f"Failed to notify user {user_id}: {e}")
