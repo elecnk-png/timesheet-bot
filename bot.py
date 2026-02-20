@@ -1166,12 +1166,19 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         await show_delete_store_request_menu(query)
     
-    # Обработчик для запроса удаления сотрудника
+    # ИСПРАВЛЕНО: Обработчик для запроса удаления сотрудника
     elif callback_data.startswith("request_delete_employee_"):
         if not (is_admin or is_super_admin):
             return
-        target_id = int(callback_data[23:])
-        await create_delete_request(query, user_id, full_name, "employee", str(target_id))
+        # Извлекаем ID из строки, убирая префикс
+        target_id_str = callback_data[23:]
+        try:
+            target_id = int(target_id_str)
+            logger.info(f"Запрос на удаление сотрудника с ID: {target_id}")
+            await create_delete_request(query, user_id, full_name, "employee", str(target_id))
+        except ValueError as e:
+            logger.error(f"Ошибка преобразования ID: {target_id_str} - {e}")
+            await query.edit_message_text("❌ Ошибка в идентификаторе сотрудника")
     
     elif callback_data.startswith("request_delete_store_"):
         if not (is_admin or is_super_admin):
@@ -1815,7 +1822,6 @@ async def show_delete_menu(query):
         reply_markup=reply_markup
     )
 
-# ИСПРАВЛЕНО: Функция для отображения меню управления должностями
 async def show_positions_menu(query):
     """Меню управления должностями"""
     keyboard = [
@@ -1832,7 +1838,6 @@ async def show_positions_menu(query):
         reply_markup=reply_markup
     )
 
-# ИСПРАВЛЕНО: Функция для отображения списка должностей
 async def list_positions(query):
     """Показать список должностей"""
     positions = get_positions()
@@ -1851,7 +1856,6 @@ async def list_positions(query):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
 
-# ИСПРАВЛЕНО: Функция для отображения меню удаления должностей (показывает все должности)
 async def show_delete_position_menu(query):
     """Меню удаления должностей - показывает все должности"""
     positions = get_positions()
@@ -1902,7 +1906,6 @@ async def show_delete_position_menu(query):
     else:
         await query.edit_message_text(text, reply_markup=reply_markup)
 
-# ИСПРАВЛЕНО: Функция для создания новой должности
 async def create_position(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Создание новой должности"""
     user_id = update.effective_user.id
@@ -1934,7 +1937,6 @@ async def create_position(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return ConversationHandler.END
 
-# ИСПРАВЛЕНО: Функция для удаления должности
 async def delete_position(query, position_name):
     """Удаление должности"""
     conn = sqlite3.connect('timesheet.db')
