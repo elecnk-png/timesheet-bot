@@ -884,22 +884,27 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif callback_data == "request_admin":
         await handle_admin_request(query, context, user_id, user)
     
-    # Добавлены обработчики для команд обычного пользователя в админке
+    # ИСПРАВЛЕНО: Добавлены обработчики для команд обычного пользователя в админке
     elif callback_data == "admin_checkin":
-        await checkin(update, context)
+        logger.info(f"Выполняется admin_checkin для пользователя {user_id}")
         await query.delete_message()
+        # Создаем новый update для вызова checkin
+        await checkin(update, context)
     
     elif callback_data == "admin_checkout":
-        await checkout(update, context)
+        logger.info(f"Выполняется admin_checkout для пользователя {user_id}")
         await query.delete_message()
+        await checkout(update, context)
     
     elif callback_data == "admin_timesheet":
-        await timesheet(update, context)
+        logger.info(f"Выполняется admin_timesheet для пользователя {user_id}")
         await query.delete_message()
+        await timesheet(update, context)
     
     elif callback_data == "admin_stats":
-        await stats(update, context)
+        logger.info(f"Выполняется admin_stats для пользователя {user_id}")
         await query.delete_message()
+        await stats(update, context)
     
     elif callback_data == "admin_list":
         if not (is_admin or is_super_admin):
