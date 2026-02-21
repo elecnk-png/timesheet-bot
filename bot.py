@@ -725,6 +725,55 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(report)
 
+# НОВАЯ ФУНКЦИЯ: Показать все открытые смены
+async def show_open_shifts(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать все открытые смены"""
+    user_id = update.effective_user.id
+    user = get_user(user_id)
+    
+    if not user or not (user[3] or user[4]):  # Проверка прав администратора
+        if update.callback_query:
+            await update.callback_query.message.reply_text("❌ Недостаточно прав")
+        else:
+            await update.message.reply_text("❌ Недостаточно прав")
+        return
+    
+    today = get_today_date_utc8()
+    
+    conn = sqlite3.connect('timesheet.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT e.full_name, e.store, e.position, t.check_in, t.user_id
+        FROM timesheet t
+        JOIN employees e ON t.user_id = e.user_id
+        WHERE t.date = ? AND t.status = 'working'
+        ORDER BY e.store, e.full_name
+    ''', (today,))
+    
+    open_shifts = cursor.fetchall()
+    conn.close()
+    
+    if not open_shifts:
+        if update.callback_query:
+            await update.callback_query.message.reply_text("✅ Сегодня нет открытых смен")
+        else:
+            await update.message.reply_text("✅ Сегодня нет открытых смен")
+        return
+    
+    text = "🔓 ОТКРЫТЫЕ СМЕНЫ СЕГОДНЯ\n\n"
+    
+    for shift in open_shifts:
+        full_name, store, position, check_in, user_id = shift
+        check_in_time = format_time_utc8(datetime.fromisoformat(check_in)) if check_in else ""
+        text += f"👤 {full_name}\n"
+        text += f"   🏪 {store} | 📋 {position}\n"
+        text += f"   ⏱ Открыта в {check_in_time}\n\n"
+    
+    if update.callback_query:
+        await update.callback_query.message.reply_text(text)
+    else:
+        await update.message.reply_text(text)
+
 @require_auth(admin_only=True)
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Панель администратора"""
@@ -740,6 +789,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📈 Моя статистика", callback_data="admin_stats")],
         [InlineKeyboardButton("👥 Все сотрудники", callback_data="admin_list")],
         [InlineKeyboardButton("📊 По магазинам", callback_data="admin_by_store")],
+        [InlineKeyboardButton("🔓 Открытые смены", callback_data="admin_open_shifts")],
         [InlineKeyboardButton("📅 Выбрать период", callback_data="period_selection")],
         [InlineKeyboardButton("📈 Статистика по магазинам", callback_data="admin_store_stats")],
         [InlineKeyboardButton("✅ Подтверждение смен", callback_data="admin_confirm")],
@@ -956,6 +1006,11 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.info(f"Выполняется admin_stats для пользователя {user_id}")
         await stats(update, context)
     
+    # НОВЫЙ ОБРАБОТЧИК для открытых смен
+    elif callback_data == "admin_open_shifts":
+        logger.info(f"Выполняется admin_open_shifts для пользователя {user_id}")
+        await show_open_shifts(update, context)
+    
     elif callback_data == "admin_list":
         if not (is_admin or is_super_admin):
             await query.edit_message_text("❌ Недостаточно прав")
@@ -1097,7 +1152,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         await show_delete_store_menu(query)
     
-    # ИСПРАВЛЕНО: Обработчик для удаления магазина из меню управления
+    # Обработчик для удаления магазина из меню управления
     elif callback_data.startswith("delete_store_list_"):
         if not (is_admin or is_super_admin):
             await query.edit_message_text("❌ Недостаточно прав")
@@ -1171,7 +1226,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         await show_delete_store_request_menu(query)
     
-    # ИСПРАВЛЕНО: Обработчик для запроса удаления сотрудника
+    # Обработчик для запроса удаления сотрудника
     elif callback_data.startswith("request_delete_employee_"):
         if not (is_admin or is_super_admin):
             return
@@ -1199,7 +1254,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await query.edit_message_text("❌ Ошибка в идентификаторе сотрудника")
     
-    # ИСПРАВЛЕНО: Обработчик для запроса удаления магазина
+    # Обработчик для запроса удаления магазина
     elif callback_data.startswith("request_delete_store_"):
         if not (is_admin or is_super_admin):
             return
@@ -1399,6 +1454,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             })()
             await show_employees_by_store(query)
         return
+    elif text == "🔓 Открытые смены":
+        user = get_user(user_id)
+        if user and (user[3] or user[4]):
+            await show_open_shifts(update, context)
+        return
     elif text == "📅 Выбрать период":
         user = get_user(user_id)
         if user and (user[3] or user[4]):
@@ -1411,7 +1471,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             })()
             await show_period_selection(query)
         return
-    elif text == "📈 Статистика":
+    elif text == "📈 Статистика по магазинам" or text == "📈 Статистика":
         user = get_user(user_id)
         if user and (user[3] or user[4]):
             query = type('Query', (), {
@@ -1629,6 +1689,7 @@ async def show_admin_panel(query):
         [InlineKeyboardButton("📈 Моя статистика", callback_data="admin_stats")],
         [InlineKeyboardButton("👥 Все сотрудники", callback_data="admin_list")],
         [InlineKeyboardButton("📊 По магазинам", callback_data="admin_by_store")],
+        [InlineKeyboardButton("🔓 Открытые смены", callback_data="admin_open_shifts")],
         [InlineKeyboardButton("📅 Выбрать период", callback_data="period_selection")],
         [InlineKeyboardButton("📈 Статистика по магазинам", callback_data="admin_store_stats")],
         [InlineKeyboardButton("✅ Подтверждение смен", callback_data="admin_confirm")],
@@ -1643,6 +1704,152 @@ async def show_admin_panel(query):
         "🔐 ПАНЕЛЬ АДМИНИСТРАТОРА\n\nВыберите действие:",
         reply_markup=reply_markup
     )
+
+# ИСПРАВЛЕНО: Функция для отображения сотрудников по магазинам с отметками о сменах
+async def show_employees_by_store(query):
+    """Показать сотрудников по магазинам с отметками о сменах"""
+    conn = sqlite3.connect('timesheet.db')
+    cursor = conn.cursor()
+    
+    today = get_today_date_utc8()
+    
+    cursor.execute('''
+        SELECT e.store, e.user_id, e.full_name, e.position, e.is_admin, e.is_super_admin, e.can_request_admin,
+               t.status, t.check_in, t.check_out
+        FROM employees e
+        LEFT JOIN timesheet t ON e.user_id = t.user_id AND t.date = ?
+        ORDER BY e.store, e.full_name
+    ''', (today,))
+    
+    employees = cursor.fetchall()
+    conn.close()
+    
+    if not employees:
+        await query.edit_message_text("👥 Нет зарегистрированных сотрудников")
+        return
+    
+    # Группируем по магазинам
+    stores_dict = {}
+    for emp in employees:
+        store, user_id, full_name, position, is_admin, is_super_admin, can_request_admin, status, check_in, check_out = emp
+        
+        if store not in stores_dict:
+            stores_dict[store] = []
+        
+        # Определяем статус смены
+        shift_status = ""
+        if status == "working":
+            check_in_time = format_time_utc8(datetime.fromisoformat(check_in)) if check_in else ""
+            shift_status = f" 🔓 Смена открыта в {check_in_time}"
+        elif status == "completed":
+            check_in_time = format_time_utc8(datetime.fromisoformat(check_in)) if check_in else ""
+            check_out_time = format_time_utc8(datetime.fromisoformat(check_out)) if check_out else ""
+            shift_status = f" ✅ Смена завершена ({check_in_time} - {check_out_time})"
+        else:
+            shift_status = " ⏳ Смена не открыта"
+        
+        role = "⭐" if is_super_admin else "👑" if is_admin else "👤"
+        request_mark = " 📝" if can_request_admin and not (is_admin or is_super_admin) else ""
+        
+        stores_dict[store].append(f"{role} {full_name} - {position}{request_mark}{shift_status}")
+    
+    text = "📊 СОТРУДНИКИ ПО МАГАЗИНАМ\n"
+    text += f"📅 {today}\n\n"
+    
+    for store, employees_list in stores_dict.items():
+        text += f"🏪 {store}\n"
+        for emp in employees_list:
+            text += f"  {emp}\n"
+        text += "\n"
+    
+    # Разбиваем длинное сообщение
+    if len(text) > MAX_MESSAGE_LENGTH:
+        await query.edit_message_text(text[:MAX_MESSAGE_LENGTH])
+        remaining = text[MAX_MESSAGE_LENGTH:]
+        while remaining:
+            await query.message.reply_text(remaining[:MAX_MESSAGE_LENGTH])
+            remaining = remaining[MAX_MESSAGE_LENGTH:]
+    else:
+        await query.edit_message_text(text)
+    
+    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
+
+# ИСПРАВЛЕНО: Функция для отображения статистики по магазинам с открытыми/закрытыми сменами
+async def show_store_stats(query):
+    """Показать статистику по магазинам с открытыми/закрытыми сменами"""
+    conn = sqlite3.connect('timesheet.db')
+    cursor = conn.cursor()
+    
+    # Получаем список магазинов
+    cursor.execute("SELECT name FROM stores")
+    stores = cursor.fetchall()
+    
+    if not stores:
+        await query.edit_message_text("❌ Нет созданных магазинов")
+        return
+    
+    today = get_today_date_utc8()
+    text = "📈 СТАТИСТИКА ПО МАГАЗИНАМ\n\n"
+    
+    for store in stores:
+        store_name = store[0]
+        
+        # Количество сотрудников в магазине
+        cursor.execute(
+            "SELECT COUNT(*) FROM employees WHERE store = ?",
+            (store_name,)
+        )
+        emp_count = cursor.fetchone()[0]
+        
+        # Количество открытых смен сегодня
+        cursor.execute('''
+            SELECT COUNT(*) 
+            FROM timesheet t
+            JOIN employees e ON t.user_id = e.user_id
+            WHERE e.store = ? AND t.date = ? AND t.status = 'working'
+        ''', (store_name, today))
+        open_shifts = cursor.fetchone()[0]
+        
+        # Количество закрытых смен сегодня
+        cursor.execute('''
+            SELECT COUNT(*) 
+            FROM timesheet t
+            JOIN employees e ON t.user_id = e.user_id
+            WHERE e.store = ? AND t.date = ? AND t.status = 'completed'
+        ''', (store_name, today))
+        closed_shifts = cursor.fetchone()[0]
+        
+        # Статистика за 30 дней
+        month_ago = (datetime.now(TIMEZONE) - timedelta(days=30)).date().isoformat()
+        cursor.execute('''
+            SELECT COUNT(DISTINCT t.id), SUM(t.hours), COUNT(DISTINCT t.user_id)
+            FROM timesheet t
+            JOIN employees e ON t.user_id = e.user_id
+            WHERE e.store = ? AND t.date BETWEEN ? AND ? AND t.status = 'completed'
+        ''', (store_name, month_ago, today))
+        
+        shifts, total_hours, active_employees = cursor.fetchone()
+        shifts = shifts or 0
+        total_hours = total_hours or 0
+        active_employees = active_employees or 0
+        
+        text += f"🏪 {store_name}\n"
+        text += f"   👥 Сотрудников: {emp_count}\n"
+        text += f"   📊 Активных (30 дн): {active_employees}\n"
+        text += f"   📅 Смен (30 дн): {shifts}\n"
+        text += f"   ⏱ Часов (30 дн): {total_hours:.2f}\n"
+        text += f"   🔓 Открытых смен сегодня: {open_shifts}\n"
+        text += f"   ✅ Закрытых смен сегодня: {closed_shifts}\n\n"
+    
+    conn.close()
+    
+    await query.edit_message_text(text)
+    
+    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
 
 async def show_all_employees(query):
     """Показать всех сотрудников"""
@@ -1665,52 +1872,6 @@ async def show_all_employees(query):
         role = "⭐ Супер-админ" if is_super_admin else "👑 Админ" if is_admin else "👤 Сотрудник"
         request_status = " ✅ может запросить админку" if can_request_admin and not (is_admin or is_super_admin) else ""
         text += f"• {full_name}\n  {role} | {position} | {store}{request_status}\n\n"
-    
-    if len(text) > MAX_MESSAGE_LENGTH:
-        for i in range(0, len(text), MAX_MESSAGE_LENGTH):
-            part = text[i:i+MAX_MESSAGE_LENGTH]
-            if i == 0:
-                await query.edit_message_text(part)
-            else:
-                await query.message.reply_text(part)
-    else:
-        await query.edit_message_text(text)
-    
-    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
-
-async def show_employees_by_store(query):
-    """Показать сотрудников по магазинам"""
-    conn = sqlite3.connect('timesheet.db')
-    cursor = conn.cursor()
-    cursor.execute('''
-        SELECT store, full_name, position, is_admin, is_super_admin, can_request_admin 
-        FROM employees ORDER BY store, full_name
-    ''')
-    employees = cursor.fetchall()
-    conn.close()
-    
-    if not employees:
-        await query.edit_message_text("👥 Нет зарегистрированных сотрудников")
-        return
-    
-    stores_dict = {}
-    for emp in employees:
-        store, full_name, position, is_admin, is_super_admin, can_request_admin = emp
-        if store not in stores_dict:
-            stores_dict[store] = []
-        
-        role = "⭐" if is_super_admin else "👑" if is_admin else "👤"
-        request_mark = " 📝" if can_request_admin and not (is_admin or is_super_admin) else ""
-        stores_dict[store].append(f"{role} {full_name} - {position}{request_mark}")
-    
-    text = "📊 СОТРУДНИКИ ПО МАГАЗИНАМ\n\n"
-    for store, employees_list in stores_dict.items():
-        text += f"🏪 {store}\n"
-        for emp in employees_list:
-            text += f"  {emp}\n"
-        text += "\n"
     
     if len(text) > MAX_MESSAGE_LENGTH:
         for i in range(0, len(text), MAX_MESSAGE_LENGTH):
@@ -1761,58 +1922,6 @@ async def show_export_options(query, days):
         f"Выберите тип экспорта:",
         reply_markup=reply_markup
     )
-
-async def show_store_stats(query):
-    """Показать статистику по магазинам"""
-    conn = sqlite3.connect('timesheet.db')
-    cursor = conn.cursor()
-    
-    cursor.execute("SELECT name FROM stores")
-    stores = cursor.fetchall()
-    
-    if not stores:
-        await query.edit_message_text("❌ Нет созданных магазинов")
-        return
-    
-    text = "📈 СТАТИСТИКА ПО МАГАЗИНАМ\n\n"
-    
-    for store in stores:
-        store_name = store[0]
-        
-        cursor.execute(
-            "SELECT COUNT(*) FROM employees WHERE store = ?",
-            (store_name,)
-        )
-        emp_count = cursor.fetchone()[0]
-        
-        today = get_today_date_utc8()
-        month_ago = (datetime.now(TIMEZONE) - timedelta(days=30)).date().isoformat()
-        
-        cursor.execute('''
-            SELECT COUNT(DISTINCT t.id), SUM(t.hours), COUNT(DISTINCT t.user_id)
-            FROM timesheet t
-            JOIN employees e ON t.user_id = e.user_id
-            WHERE e.store = ? AND t.date BETWEEN ? AND ? AND t.status = 'completed'
-        ''', (store_name, month_ago, today))
-        
-        shifts, total_hours, active_employees = cursor.fetchone()
-        shifts = shifts or 0
-        total_hours = total_hours or 0
-        active_employees = active_employees or 0
-        
-        text += f"🏪 {store_name}\n"
-        text += f"   👥 Сотрудников: {emp_count}\n"
-        text += f"   📊 Активных (30 дн): {active_employees}\n"
-        text += f"   📅 Смен (30 дн): {shifts}\n"
-        text += f"   ⏱ Часов (30 дн): {total_hours:.2f}\n\n"
-    
-    conn.close()
-    
-    await query.edit_message_text(text)
-    
-    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
 
 async def show_confirm_menu(query):
     """Меню подтверждения смен"""
@@ -2125,7 +2234,7 @@ async def list_stores(query):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
 
-# ИСПРАВЛЕНО: Функция для отображения меню удаления магазинов
+# Функция для отображения меню удаления магазинов
 async def show_delete_store_menu(query):
     """Меню удаления магазинов"""
     stores = get_stores()
@@ -2178,7 +2287,7 @@ async def show_delete_store_menu(query):
     else:
         await query.edit_message_text(text, reply_markup=reply_markup)
 
-# ИСПРАВЛЕНО: Функция для удаления магазина
+# Функция для удаления магазина
 async def delete_store(query, store_name):
     """Удаление магазина"""
     conn = sqlite3.connect('timesheet.db')
@@ -2692,7 +2801,7 @@ async def show_delete_employee_menu(query):
     else:
         await query.edit_message_text(text, reply_markup=reply_markup)
 
-# ИСПРАВЛЕНО: Функция для отображения меню выбора магазина для удаления
+# Функция для отображения меню выбора магазина для удаления
 async def show_delete_store_request_menu(query):
     """Меню выбора магазина для удаления"""
     stores = get_stores()
@@ -2745,7 +2854,7 @@ async def show_delete_store_request_menu(query):
     else:
         await query.edit_message_text(text, reply_markup=reply_markup)
 
-# ИСПРАВЛЕНО: Функция для создания запроса на удаление
+# Функция для создания запроса на удаление
 async def create_delete_request(query, requester_id, requester_name, target_type, target_id):
     """Создание запроса на удаление"""
     # Проверяем, нет ли уже активного запроса
@@ -2796,7 +2905,6 @@ async def create_delete_request(query, requester_id, requester_name, target_type
     super_admins = get_super_admins()
     for admin_id, admin_name in super_admins:
         try:
-            # Используем query.message.bot для отправки
             await query.message.bot.send_message(
                 admin_id,
                 f"🔔 Новый запрос на удаление!\n\n"
