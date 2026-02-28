@@ -1564,6 +1564,12 @@ async def delete_position_fixed(query, position_name):
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     
+    # Очищаем название от возможных подчеркиваний в начале
+    if position_name.startswith('_'):
+        position_name = position_name[1:]
+    
+    logger.info(f"Удаление должности: '{position_name}'")
+    
     # Проверяем, используется ли должность
     cursor.execute("SELECT COUNT(*) FROM employees WHERE position = ?", (position_name,))
     count = cursor.fetchone()[0]
@@ -1581,16 +1587,20 @@ async def delete_position_fixed(query, position_name):
     pos_count = cursor.fetchone()[0]
     
     if pos_count == 0:
-        await query.edit_message_text(f"❌ Должность '{position_name}' не найдена")
+        await query.edit_message_text(f"❌ Должность '{position_name}' не найдена в базе данных")
         conn.close()
         return
     
     # Удаляем должность
     cursor.execute("DELETE FROM positions WHERE name = ?", (position_name,))
     conn.commit()
+    deleted = cursor.rowcount > 0
     conn.close()
     
-    await query.edit_message_text(f"✅ Должность '{position_name}' удалена")
+    if deleted:
+        await query.edit_message_text(f"✅ Должность '{position_name}' успешно удалена!")
+    else:
+        await query.edit_message_text(f"❌ Не удалось удалить должность '{position_name}'")
     
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="admin_positions_menu")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -1697,7 +1707,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         user_id = query.from_user.id
         
-               # Проверяем, является ли должность "директор магазина"
+        # Проверяем, является ли должность "директор магазина"
         can_request_admin = 1 if position.lower() == "директор магазина" else 0
         
         conn = sqlite3.connect('timesheet.db')
@@ -1989,6 +1999,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("❌ Недостаточно прав")
             return
         position_name = callback_data[15:]
+        logger.info(f"Получен запрос на удаление должности: {position_name}")
         await delete_position_fixed(query, position_name)
     
     elif callback_data == "create_store":
@@ -2923,8 +2934,10 @@ async def show_delete_position_menu(query):
         if count == 0:
             # Должность не используется - можно удалить
             text += f"✅ {pos}\n"
+            callback_data = f"delete_position_{pos}"
+            logger.info(f"Создаем callback_data для должности {pos}: {callback_data}")
             keyboard.append([
-                InlineKeyboardButton(f"🗑 {pos}", callback_data=f"delete_position_{pos}")
+                InlineKeyboardButton(f"🗑 {pos}", callback_data=callback_data)
             ])
         else:
             # Должность используется - нельзя удалить
@@ -4412,7 +4425,7 @@ async def main():
         )
         app.add_handler(delete_shift_conv)
         
-        # НОВЫЙ ConversationHandler для добавления сотрудников
+        # ConversationHandler для добавления сотрудников
         add_employee_conv = ConversationHandler(
             entry_points=[CallbackQueryHandler(button_callback, pattern="^add_employee_start$")],
             states={
