@@ -1871,8 +1871,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await create_delete_request(query, user_id, full_name, "employee", str(target_id))
         except ValueError as e:
             logger.error(f"Ошибка преобразования ID: {target_id_str} - {e}")
-            if target_id_str.start
-if target_id_str.startswith('_'):
+            if target_id_str.startswith('_'):
                 target_id_str = target_id_str[1:]
                 try:
                     target_id = int(target_id_str)
