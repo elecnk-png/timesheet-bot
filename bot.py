@@ -5,6 +5,7 @@ import csv
 import io
 import asyncio
 import sys
+import random
 from datetime import datetime, timedelta, date
 from functools import wraps
 from typing import Dict, List, Tuple, Optional, Any
@@ -52,8 +53,9 @@ logger = logging.getLogger(__name__)
     CUSTOM_PERIOD_END, DELETE_EMPLOYEE_REQUEST, DELETE_STORE_REQUEST,
     ASSIGN_SUPER_ADMIN_SELECT, ADD_SHIFT_SELECT_STORE, ADD_SHIFT_SELECT_EMPLOYEE,
     ADD_SHIFT_SELECT_DATE, ADD_SHIFT_ENTER_HOURS, DELETE_SHIFT_SELECT_STORE,
-    DELETE_SHIFT_SELECT_EMPLOYEE, DELETE_SHIFT_SELECT_DATE
-) = range(18)
+    DELETE_SHIFT_SELECT_EMPLOYEE, DELETE_SHIFT_SELECT_DATE,
+    ADD_EMPLOYEE_START, ADD_EMPLOYEE_NAME, ADD_EMPLOYEE_POSITION, ADD_EMPLOYEE_STORE
+) = range(22)
 
 # Константы
 MAX_MESSAGE_LENGTH = 4000
@@ -362,7 +364,6 @@ async def cancel_registration(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
     return ConversationHandler.END
 
-# ИСПРАВЛЕНО: Функция для проверки ФИО (требуется минимум 3 слова)
 def validate_full_name(name: str) -> Tuple[bool, str]:
     """Проверка ФИО - должно быть минимум 3 слова"""
     parts = name.strip().split()
@@ -372,7 +373,6 @@ def validate_full_name(name: str) -> Tuple[bool, str]:
         return False, "❌ Каждая часть ФИО должна содержать минимум 2 символа"
     return True, ""
 
-# ИСПРАВЛЕНО: Функция для ввода имени при регистрации с проверкой
 async def enter_full_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Получение ФИО от пользователя с проверкой"""
     user_id = update.effective_user.id
@@ -437,7 +437,6 @@ async def delete_webhook():
     except Exception as e:
         logger.error(f"❌ Ошибка при удалении webhook: {e}")
 
-# Обновленная функция start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Обработчик команды /start - регистрация или главное меню"""
     user = update.effective_user
@@ -550,14 +549,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.info(f"🔥 start возвращает ENTER_FULL_NAME = {ENTER_FULL_NAME}")
             return ENTER_FULL_NAME
 
-# ИСПРАВЛЕНО: Функция checkin с поддержкой callback
 async def checkin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отметка начала рабочего дня"""
     user_id = update.effective_user.id
     
     user = get_user(user_id)
     if not user:
-        # Определяем, откуда пришел вызов
         if update.callback_query:
             await update.callback_query.message.reply_text("❌ Сначала зарегистрируйтесь через /start")
         else:
@@ -592,13 +589,11 @@ async def checkin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     result_message = f"✅ Начало смены отмечено в {format_time_utc8(now)}\n📅 Дата: {today}\nНе забудьте закрыть смену"
     
-    # Отправляем результат в зависимости от источника вызова
     if update.callback_query:
         await update.callback_query.message.reply_text(result_message)
     else:
         await update.message.reply_text(result_message)
 
-# ИСПРАВЛЕНО: Функция checkout с поддержкой callback
 async def checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отметка конца рабочего дня"""
     user_id = update.effective_user.id
@@ -646,7 +641,6 @@ async def checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(result_message)
 
-# ИСПРАВЛЕНО: Функция timesheet с поддержкой callback
 async def timesheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Просмотр табеля за указанный период"""
     user_id = update.effective_user.id
@@ -714,7 +708,6 @@ async def timesheet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(report)
 
-# ИСПРАВЛЕНО: Функция stats с поддержкой callback
 async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Статистика за 30 дней по дням недели"""
     user_id = update.effective_user.id
@@ -791,13 +784,12 @@ async def stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(report)
 
-# НОВАЯ ФУНКЦИЯ: Показать все открытые смены
 async def show_open_shifts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показать все открытые смены"""
     user_id = update.effective_user.id
     user = get_user(user_id)
     
-    if not user or not (user[3] or user[4]):  # Проверка прав администратора
+    if not user or not (user[3] or user[4]):
         if update.callback_query:
             await update.callback_query.message.reply_text("❌ Недостаточно прав")
         else:
@@ -847,13 +839,12 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = get_user(user_id)
     is_super_admin = user[4] if user else 0
     
-    # Добавляем пункты меню обычного пользователя
     keyboard = [
         [InlineKeyboardButton("✅ Открыть смену", callback_data="admin_checkin")],
         [InlineKeyboardButton("✅ Закрыть смену", callback_data="admin_checkout")],
         [InlineKeyboardButton("📊 Мой табель", callback_data="admin_timesheet")],
         [InlineKeyboardButton("📈 Моя статистика", callback_data="admin_stats")],
-        [InlineKeyboardButton("👥 Все сотрудники", callback_data="admin_list")],
+        [InlineKeyboardButton("👥 Управление сотрудниками", callback_data="admin_employees_menu")],
         [InlineKeyboardButton("📊 По магазинам", callback_data="admin_by_store")],
         [InlineKeyboardButton("🔓 Открытые смены", callback_data="admin_open_shifts")],
         [InlineKeyboardButton("📅 Выбрать период", callback_data="period_selection")],
@@ -862,7 +853,7 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🗑 Запросить удаление", callback_data="admin_delete_menu")],
         [InlineKeyboardButton("📋 Управление должностями", callback_data="admin_positions_menu")],
         [InlineKeyboardButton("🏪 Управление магазинами", callback_data="admin_stores_menu")],
-        [InlineKeyboardButton("🔄 Управление сменами", callback_data="admin_shifts_menu")],  # НОВАЯ КНОПКА
+        [InlineKeyboardButton("🔄 Управление сменами", callback_data="admin_shifts_menu")],
     ]
     
     if is_super_admin:
@@ -883,7 +874,6 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
-# НОВАЯ ФУНКЦИЯ: Меню управления сменами
 async def show_shifts_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показать меню управления сменами"""
     query = update.callback_query
@@ -902,7 +892,187 @@ async def show_shifts_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
-# НОВАЯ ФУНКЦИЯ: Начало добавления смены - выбор магазина
+async def show_employees_management_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать меню управления сотрудниками"""
+    query = update.callback_query
+    await query.answer()
+    
+    keyboard = [
+        [InlineKeyboardButton("➕ Добавить сотрудника", callback_data="add_employee_start")],
+        [InlineKeyboardButton("👥 Список сотрудников", callback_data="admin_list")],
+        [InlineKeyboardButton("📊 По магазинам", callback_data="admin_by_store")],
+        [InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")]
+    ]
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(
+        "👥 УПРАВЛЕНИЕ СОТРУДНИКАМИ\n\n"
+        "Выберите действие:",
+        reply_markup=reply_markup
+    )
+
+async def add_employee_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Начало добавления сотрудника"""
+    query = update.callback_query
+    await query.answer()
+    
+    await query.edit_message_text(
+        "📝 Введите ФИО нового сотрудника (Имя Отчество Фамилия):\n"
+        "Например: Иванов Иван Иванович"
+    )
+    return ADD_EMPLOYEE_NAME
+
+async def add_employee_enter_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Ввод ФИО нового сотрудника"""
+    full_name = update.message.text.strip()
+    
+    # Проверяем ФИО
+    is_valid, error_message = validate_full_name(full_name)
+    if not is_valid:
+        await update.message.reply_text(
+            f"{error_message}\n\n"
+            f"Пожалуйста, введите полное ФИО (Имя Отчество Фамилия):\n"
+            f"Например: Иванов Иван Иванович"
+        )
+        return ADD_EMPLOYEE_NAME
+    
+    # Сохраняем имя
+    context.user_data['add_employee_name'] = full_name
+    
+    # Показываем должности
+    positions = get_positions()
+    
+    if not positions:
+        await update.message.reply_text(
+            "❌ В системе нет должностей. Сначала создайте должность в управлении должностями."
+        )
+        return ConversationHandler.END
+    
+    # Создаем клавиатуру с должностями
+    keyboard = []
+    for pos in positions:
+        keyboard.append([InlineKeyboardButton(pos, callback_data=f"add_emp_pos_{pos}")])
+    
+    keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="back_to_employee_management")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        f"👤 ФИО: {full_name}\n\n"
+        f"📝 Выберите должность сотрудника:",
+        reply_markup=reply_markup
+    )
+    
+    return ADD_EMPLOYEE_POSITION
+
+async def add_employee_select_position(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Выбор должности для нового сотрудника"""
+    query = update.callback_query
+    await query.answer()
+    
+    position = query.data.replace("add_emp_pos_", "", 1)
+    context.user_data['add_employee_position'] = position
+    
+    stores = get_stores()
+    
+    if not stores:
+        await query.edit_message_text(
+            "❌ В системе нет магазинов. Сначала создайте магазин в управлении магазинами."
+        )
+        return ConversationHandler.END
+    
+    keyboard = []
+    for store_name, address in stores:
+        keyboard.append([
+            InlineKeyboardButton(f"{store_name}", callback_data=f"add_emp_store_{store_name}")
+        ])
+    keyboard.append([InlineKeyboardButton("❌ Отмена", callback_data="back_to_employee_management")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await query.edit_message_text(
+        f"👤 ФИО: {context.user_data.get('add_employee_name')}\n"
+        f"📋 Должность: {position}\n\n"
+        f"🏪 Выберите магазин для сотрудника:",
+        reply_markup=reply_markup
+    )
+    
+    return ADD_EMPLOYEE_STORE
+
+async def add_employee_select_store(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Выбор магазина и сохранение нового сотрудника"""
+    query = update.callback_query
+    await query.answer()
+    
+    store = query.data.replace("add_emp_store_", "", 1)
+    position = context.user_data.get('add_employee_position')
+    full_name = context.user_data.get('add_employee_name')
+    
+    if not position or not full_name:
+        await query.edit_message_text(
+            "❌ Ошибка регистрации. Пожалуйста, начните заново."
+        )
+        return ConversationHandler.END
+    
+    # Генерируем случайный user_id для сотрудника без телеграм
+    temp_user_id = -random.randint(10000, 99999)
+    
+    conn = sqlite3.connect('timesheet.db')
+    cursor = conn.cursor()
+    
+    try:
+        # Проверяем, не существует ли уже такой user_id
+        while True:
+            cursor.execute("SELECT user_id FROM employees WHERE user_id = ?", (temp_user_id,))
+            if not cursor.fetchone():
+                break
+            temp_user_id = -random.randint(10000, 99999)
+        
+        # Определяем, может ли сотрудник запрашивать админку
+        can_request_admin = 1 if position.lower() == "директор магазина" else 0
+        
+        # Регистрируем нового сотрудника
+        cursor.execute('''
+            INSERT INTO employees (user_id, full_name, position, store, reg_date, is_admin, is_super_admin, can_request_admin)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (temp_user_id, full_name, position, store, get_today_date_utc8(), 0, 0, can_request_admin))
+        
+        conn.commit()
+        
+        await query.edit_message_text(
+            f"✅ Сотрудник успешно добавлен!\n\n"
+            f"👤 {full_name}\n"
+            f"📋 Должность: {position}\n"
+            f"🏪 Магазин: {store}\n"
+            f"🆔 Внутренний ID: {temp_user_id}\n\n"
+            f"Теперь вы можете управлять сменами этого сотрудника через меню управления сменами."
+        )
+        
+    except Exception as e:
+        logger.error(f"ОШИБКА при добавлении сотрудника: {e}")
+        await query.edit_message_text(
+            "❌ Произошла ошибка при добавлении сотрудника. Попробуйте позже."
+        )
+    finally:
+        conn.close()
+    
+    # Очищаем временные данные
+    context.user_data.pop('add_employee_name', None)
+    context.user_data.pop('add_employee_position', None)
+    
+    keyboard = [[InlineKeyboardButton("◀️ Назад в управление сотрудниками", 
+                                     callback_data="admin_employees_menu")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
+    
+    return ConversationHandler.END
+
+async def back_to_employee_management(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Возврат в меню управления сотрудниками"""
+    query = update.callback_query
+    await query.answer()
+    
+    await show_employees_management_menu(update, context)
+    return ConversationHandler.END
+
 async def add_shift_select_store(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор магазина для добавления смены"""
     query = update.callback_query
@@ -928,13 +1098,12 @@ async def add_shift_select_store(update: Update, context: ContextTypes.DEFAULT_T
     
     return ADD_SHIFT_SELECT_STORE
 
-# НОВАЯ ФУНКЦИЯ: Выбор сотрудника для добавления смены
-async def add_shift_select_employee(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Выбор сотрудника для добавления смены"""
+async def add_shift_select_employee_fixed(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Выбор сотрудника для добавления смены (исправленная версия)"""
     query = update.callback_query
     await query.answer()
     
-    store_name = query.data[17:]  # Убираем "add_shift_store_"
+    store_name = query.data.replace("add_shift_store_", "", 1)
     context.user_data['add_shift_store'] = store_name
     
     employees = get_employees_by_store(store_name)
@@ -959,13 +1128,12 @@ async def add_shift_select_employee(update: Update, context: ContextTypes.DEFAUL
     
     return ADD_SHIFT_SELECT_EMPLOYEE
 
-# НОВАЯ ФУНКЦИЯ: Выбор даты для добавления смены
-async def add_shift_select_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Выбор даты для добавления смены"""
+async def add_shift_select_date_fixed(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Выбор даты для добавления смены (исправленная версия)"""
     query = update.callback_query
     await query.answer()
     
-    user_id = int(query.data[14:])  # Убираем "add_shift_emp_"
+    user_id = int(query.data.replace("add_shift_emp_", "", 1))
     context.user_data['add_shift_user_id'] = user_id
     
     # Получаем информацию о сотруднике
@@ -990,7 +1158,6 @@ async def add_shift_select_date(update: Update, context: ContextTypes.DEFAULT_TY
     
     return ADD_SHIFT_SELECT_DATE
 
-# НОВАЯ ФУНКЦИЯ: Ввод часов для добавления смены
 async def add_shift_enter_hours(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Ввод количества часов для смены"""
     date_str = update.message.text.strip()
@@ -1013,7 +1180,6 @@ async def add_shift_enter_hours(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return ADD_SHIFT_SELECT_DATE
 
-# НОВАЯ ФУНКЦИЯ: Сохранение добавленной смены
 async def add_shift_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Сохранение добавленной смены"""
     hours_text = update.message.text.strip()
@@ -1101,7 +1267,6 @@ async def add_shift_save(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return ADD_SHIFT_ENTER_HOURS
 
-# НОВАЯ ФУНКЦИЯ: Начало удаления смены - выбор магазина
 async def delete_shift_select_store(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор магазина для удаления смены"""
     query = update.callback_query
@@ -1127,13 +1292,12 @@ async def delete_shift_select_store(update: Update, context: ContextTypes.DEFAUL
     
     return DELETE_SHIFT_SELECT_STORE
 
-# НОВАЯ ФУНКЦИЯ: Выбор сотрудника для удаления смены
 async def delete_shift_select_employee(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор сотрудника для удаления смены"""
     query = update.callback_query
     await query.answer()
     
-    store_name = query.data[19:]  # Убираем "delete_shift_store_"
+    store_name = query.data.replace("delete_shift_store_", "", 1)
     context.user_data['delete_shift_store'] = store_name
     
     employees = get_employees_by_store(store_name)
@@ -1158,13 +1322,12 @@ async def delete_shift_select_employee(update: Update, context: ContextTypes.DEF
     
     return DELETE_SHIFT_SELECT_EMPLOYEE
 
-# НОВАЯ ФУНКЦИЯ: Выбор даты для удаления смены
 async def delete_shift_select_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выбор даты для удаления смены"""
     query = update.callback_query
     await query.answer()
     
-    user_id = int(query.data[17:])  # Убираем "delete_shift_emp_"
+    user_id = int(query.data.replace("delete_shift_emp_", "", 1))
     context.user_data['delete_shift_user_id'] = user_id
     
     # Получаем информацию о сотруднике
@@ -1227,13 +1390,12 @@ async def delete_shift_select_date(update: Update, context: ContextTypes.DEFAULT
     
     return DELETE_SHIFT_SELECT_DATE
 
-# НОВАЯ ФУНКЦИЯ: Подтверждение удаления смены
 async def delete_shift_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Подтверждение удаления смены"""
     query = update.callback_query
     await query.answer()
     
-    shift_id = int(query.data[21:])  # Убираем "delete_shift_confirm_"
+    shift_id = int(query.data.replace("delete_shift_confirm_", "", 1))
     
     # Получаем информацию о смене для подтверждения
     conn = sqlite3.connect('timesheet.db')
@@ -1274,13 +1436,12 @@ async def delete_shift_confirm(update: Update, context: ContextTypes.DEFAULT_TYP
         reply_markup=reply_markup
     )
 
-# НОВАЯ ФУНКЦИЯ: Выполнение удаления смены
 async def delete_shift_execute(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Выполнение удаления смены"""
     query = update.callback_query
     await query.answer()
     
-    shift_id = int(query.data[21:])  # Убираем "delete_shift_execute_"
+    shift_id = int(query.data.replace("delete_shift_execute_", "", 1))
     
     if delete_shift(shift_id):
         await query.edit_message_text(f"✅ Смена #{shift_id} успешно удалена!")
@@ -1293,9 +1454,8 @@ async def delete_shift_execute(update: Update, context: ContextTypes.DEFAULT_TYP
     
     return ConversationHandler.END
 
-# ИСПРАВЛЕННАЯ ФУНКЦИЯ: Показать неподтвержденные смены за период
-async def show_unconfirmed_period(query, days):
-    """Показать неподтвержденные смены за период"""
+async def show_unconfirmed_period_fixed(query, days):
+    """Показать неподтвержденные смены за период (исправленная версия)"""
     end_date = get_today_date_utc8()
     start_date = (datetime.now(TIMEZONE) - timedelta(days=days-1)).date().isoformat()
     
@@ -1346,7 +1506,7 @@ async def show_unconfirmed_period(query, days):
                            callback_data=f"confirm_all_period_{days}")
     ])
     
-    # Добавляем кнопки для каждой смены (максимум 10)
+    # Добавляем кнопки для каждой смены
     for shift in unconfirmed[:10]:
         shift_id = shift[0]
         keyboard.append([
@@ -1368,7 +1528,6 @@ async def show_unconfirmed_period(query, days):
     else:
         await query.edit_message_text(text, reply_markup=reply_markup)
 
-# НОВАЯ ФУНКЦИЯ: Подтвердить все смены за период
 async def confirm_all_period(query, days):
     """Подтвердить все смены за период"""
     end_date = get_today_date_utc8()
@@ -1389,6 +1548,51 @@ async def confirm_all_period(query, days):
     await query.edit_message_text(f"✅ Подтверждено {count} смен за последние {days} дней")
     
     keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="back_to_confirm")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
+
+async def handle_confirm_period_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка выбора периода для неподтвержденных смен"""
+    query = update.callback_query
+    await query.answer()
+    
+    days = int(query.data.replace("confirm_period_", "", 1))
+    await show_unconfirmed_period_fixed(query, days)
+
+async def delete_position_fixed(query, position_name):
+    """Удаление должности (исправленная версия)"""
+    conn = sqlite3.connect('timesheet.db')
+    cursor = conn.cursor()
+    
+    # Проверяем, используется ли должность
+    cursor.execute("SELECT COUNT(*) FROM employees WHERE position = ?", (position_name,))
+    count = cursor.fetchone()[0]
+    
+    if count > 0:
+        await query.edit_message_text(
+            f"❌ Невозможно удалить должность '{position_name}'\n"
+            f"Она используется {count} сотрудником(ами)"
+        )
+        conn.close()
+        return
+    
+    # Проверяем, есть ли такая должность в таблице positions
+    cursor.execute("SELECT COUNT(*) FROM positions WHERE name = ?", (position_name,))
+    pos_count = cursor.fetchone()[0]
+    
+    if pos_count == 0:
+        await query.edit_message_text(f"❌ Должность '{position_name}' не найдена")
+        conn.close()
+        return
+    
+    # Удаляем должность
+    cursor.execute("DELETE FROM positions WHERE name = ?", (position_name,))
+    conn.commit()
+    conn.close()
+    
+    await query.edit_message_text(f"✅ Должность '{position_name}' удалена")
+    
+    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="admin_positions_menu")]]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
 
@@ -1493,7 +1697,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         user_id = query.from_user.id
         
-        # Проверяем, является ли должность "директор магазина"
+               # Проверяем, является ли должность "директор магазина"
         can_request_admin = 1 if position.lower() == "директор магазина" else 0
         
         conn = sqlite3.connect('timesheet.db')
@@ -1564,7 +1768,6 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif callback_data == "request_admin":
         await handle_admin_request(query, context, user_id, user)
     
-    # Обработчики для команд обычного пользователя в админке
     elif callback_data == "admin_checkin":
         logger.info(f"Выполняется admin_checkin для пользователя {user_id}")
         await checkin(update, context)
@@ -1596,6 +1799,34 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("❌ Недостаточно прав")
             return
         await show_employees_by_store(query)
+    
+    elif callback_data == "admin_employees_menu":
+        if not (is_admin or is_super_admin):
+            await query.edit_message_text("❌ Недостаточно прав")
+            return
+        await show_employees_management_menu(update, context)
+    
+    elif callback_data == "add_employee_start":
+        if not (is_admin or is_super_admin):
+            await query.edit_message_text("❌ Недостаточно прав")
+            return
+        await add_employee_start(update, context)
+        return ADD_EMPLOYEE_NAME
+    
+    elif callback_data.startswith("add_emp_pos_"):
+        if not (is_admin or is_super_admin):
+            return
+        await add_employee_select_position(update, context)
+        return ADD_EMPLOYEE_STORE
+    
+    elif callback_data.startswith("add_emp_store_"):
+        if not (is_admin or is_super_admin):
+            return
+        await add_employee_select_store(update, context)
+        return ConversationHandler.END
+    
+    elif callback_data == "back_to_employee_management":
+        await back_to_employee_management(update, context)
     
     # Обработка выбора периода
     elif callback_data == "period_selection":
@@ -1674,56 +1905,56 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         await show_stores_menu(query)
     
-    elif callback_data == "admin_shifts_menu":  # НОВЫЙ ОБРАБОТЧИК
+    elif callback_data == "admin_shifts_menu":
         if not (is_admin or is_super_admin):
             await query.edit_message_text("❌ Недостаточно прав")
             return
         await show_shifts_menu(update, context)
     
-    elif callback_data == "add_shift_start":  # НОВЫЙ ОБРАБОТЧИК
+    elif callback_data == "add_shift_start":
         if not (is_admin or is_super_admin):
             await query.edit_message_text("❌ Недостаточно прав")
             return
         await add_shift_select_store(update, context)
         return ADD_SHIFT_SELECT_STORE
     
-    elif callback_data.startswith("add_shift_store_"):  # НОВЫЙ ОБРАБОТЧИК
+    elif callback_data.startswith("add_shift_store_"):
         if not (is_admin or is_super_admin):
             return
-        await add_shift_select_employee(update, context)
+        await add_shift_select_employee_fixed(update, context)
         return ADD_SHIFT_SELECT_EMPLOYEE
     
-    elif callback_data.startswith("add_shift_emp_"):  # НОВЫЙ ОБРАБОТЧИК
+    elif callback_data.startswith("add_shift_emp_"):
         if not (is_admin or is_super_admin):
             return
-        await add_shift_select_date(update, context)
+        await add_shift_select_date_fixed(update, context)
         return ADD_SHIFT_SELECT_DATE
     
-    elif callback_data == "delete_shift_start":  # НОВЫЙ ОБРАБОТЧИК
+    elif callback_data == "delete_shift_start":
         if not (is_admin or is_super_admin):
             await query.edit_message_text("❌ Недостаточно прав")
             return
         await delete_shift_select_store(update, context)
         return DELETE_SHIFT_SELECT_STORE
     
-    elif callback_data.startswith("delete_shift_store_"):  # НОВЫЙ ОБРАБОТЧИК
+    elif callback_data.startswith("delete_shift_store_"):
         if not (is_admin or is_super_admin):
             return
         await delete_shift_select_employee(update, context)
         return DELETE_SHIFT_SELECT_EMPLOYEE
     
-    elif callback_data.startswith("delete_shift_emp_"):  # НОВЫЙ ОБРАБОТЧИК
+    elif callback_data.startswith("delete_shift_emp_"):
         if not (is_admin or is_super_admin):
             return
         await delete_shift_select_date(update, context)
         return DELETE_SHIFT_SELECT_DATE
     
-    elif callback_data.startswith("delete_shift_confirm_"):  # НОВЫЙ ОБРАБОТЧИК
+    elif callback_data.startswith("delete_shift_confirm_"):
         if not (is_admin or is_super_admin):
             return
         await delete_shift_confirm(update, context)
     
-    elif callback_data.startswith("delete_shift_execute_"):  # НОВЫЙ ОБРАБОТЧИК
+    elif callback_data.startswith("delete_shift_execute_"):
         if not (is_admin or is_super_admin):
             return
         await delete_shift_execute(update, context)
@@ -1758,7 +1989,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("❌ Недостаточно прав")
             return
         position_name = callback_data[15:]
-        await delete_position(query, position_name)
+        await delete_position_fixed(query, position_name)
     
     elif callback_data == "create_store":
         if not (is_admin or is_super_admin):
@@ -1804,10 +2035,9 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif callback_data.startswith("confirm_period_"):
         if not (is_admin or is_super_admin):
             return
-        days = int(callback_data[14:])
-        await show_unconfirmed_period(query, days)  # ИСПРАВЛЕНО: теперь вызывает исправленную функцию
+        await handle_confirm_period_selection(update, context)
     
-    elif callback_data.startswith("confirm_all_period_"):  # НОВЫЙ ОБРАБОТЧИК
+    elif callback_data.startswith("confirm_all_period_"):
         if not (is_admin or is_super_admin):
             return
         days = int(callback_data[18:])
@@ -2012,306 +2242,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
 
-# ИСПРАВЛЕНО: Обработчик текстовых сообщений с проверкой состояний
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка текстовых сообщений"""
-    text = update.message.text
-    user_id = update.effective_user.id
-    
-    logger.info(f"Получено сообщение от {user_id}: {text}")
-    
-    # Проверяем, не находимся ли мы в каком-либо ConversationHandler
-    if context.user_data.get('conversation_state'):
-        logger.info(f"Пользователь в состоянии {context.user_data['conversation_state']}, пропускаем обработку")
-        return
-    
-    # Обработка кнопок из нижнего меню
-    if text == "🏠 Главное меню":
-        await start(update, context)
-        return
-    elif text == "👑 Панель админа":
-        # Проверяем, есть ли права администратора
-        user = get_user(user_id)
-        if user and (user[3] or user[4]):  # is_admin или is_super_admin
-            await admin_panel(update, context)
-        else:
-            await update.message.reply_text("❌ У вас нет прав доступа к панели администратора")
-        return
-    elif text == "✅ Открыть смену":
-        await checkin(update, context)
-        return
-    elif text == "✅ Закрыть смену":
-        await checkout(update, context)
-        return
-    elif text == "📊 Мой табель":
-        await timesheet(update, context)
-        return
-    elif text == "📈 Моя статистика":
-        await stats(update, context)
-        return
-    
-    # Обработка кнопок из панели администратора (когда они отправлены как текст)
-    elif text == "👥 Все сотрудники":
-        user = get_user(user_id)
-        if user and (user[3] or user[4]):
-            query = type('Query', (), {
-                'data': 'admin_list',
-                'from_user': update.effective_user,
-                'message': update.message,
-                'answer': lambda: None,
-                'edit_message_text': lambda text, reply_markup=None: None
-            })()
-            await show_all_employees(query)
-        return
-    elif text == "📊 По магазинам":
-        user = get_user(user_id)
-        if user and (user[3] or user[4]):
-            query = type('Query', (), {
-                'data': 'admin_by_store',
-                'from_user': update.effective_user,
-                'message': update.message,
-                'answer': lambda: None,
-                'edit_message_text': lambda text, reply_markup=None: None
-            })()
-            await show_employees_by_store(query)
-        return
-    elif text == "🔓 Открытые смены":
-        user = get_user(user_id)
-        if user and (user[3] or user[4]):
-            await show_open_shifts(update, context)
-        return
-    elif text == "📅 Выбрать период":
-        user = get_user(user_id)
-        if user and (user[3] or user[4]):
-            query = type('Query', (), {
-                'data': 'period_selection',
-                'from_user': update.effective_user,
-                'message': update.message,
-                'answer': lambda: None,
-                'edit_message_text': lambda text, reply_markup=None: None
-            })()
-            await show_period_selection(query)
-        return
-    elif text == "📈 Статистика по магазинам" or text == "📈 Статистика":
-        user = get_user(user_id)
-        if user and (user[3] or user[4]):
-            query = type('Query', (), {
-                'data': 'admin_store_stats',
-                'from_user': update.effective_user,
-                'message': update.message,
-                'answer': lambda: None,
-                'edit_message_text': lambda text, reply_markup=None: None
-            })()
-            await show_store_stats(query)
-        return
-    elif text == "✅ Подтверждение смен":
-        user = get_user(user_id)
-        if user and (user[3] or user[4]):
-            query = type('Query', (), {
-                'data': 'admin_confirm',
-                'from_user': update.effective_user,
-                'message': update.message,
-                'answer': lambda: None,
-                'edit_message_text': lambda text, reply_markup=None: None
-            })()
-            await show_confirm_menu(query)
-        return
-    elif text == "🗑 Запросить удаление":
-        user = get_user(user_id)
-        if user and (user[3] or user[4]):
-            query = type('Query', (), {
-                'data': 'admin_delete_menu',
-                'from_user': update.effective_user,
-                'message': update.message,
-                'answer': lambda: None,
-                'edit_message_text': lambda text, reply_markup=None: None
-            })()
-            await show_delete_menu(query)
-        return
-    elif text == "📋 Управление должностями":
-        user = get_user(user_id)
-        if user and (user[3] or user[4]):
-            query = type('Query', (), {
-                'data': 'admin_positions_menu',
-                'from_user': update.effective_user,
-                'message': update.message,
-                'answer': lambda: None,
-                'edit_message_text': lambda text, reply_markup=None: None
-            })()
-            await show_positions_menu(query)
-        return
-    elif text == "🏪 Управление магазинами":
-        user = get_user(user_id)
-        if user and (user[3] or user[4]):
-            query = type('Query', (), {
-                'data': 'admin_stores_menu',
-                'from_user': update.effective_user,
-                'message': update.message,
-                'answer': lambda: None,
-                'edit_message_text': lambda text, reply_markup=None: None
-            })()
-            await show_stores_menu(query)
-        return
-    elif text == "🔄 Управление сменами":  # НОВАЯ КНОПКА
-        user = get_user(user_id)
-        if user and (user[3] or user[4]):
-            query = type('Query', (), {
-                'data': 'admin_shifts_menu',
-                'from_user': update.effective_user,
-                'message': update.message,
-                'answer': lambda: None,
-                'edit_message_text': lambda text, reply_markup=None: None
-            })()
-            await show_shifts_menu(update, context)
-        return
-    elif text == "➕ Добавить админа":
-        user = get_user(user_id)
-        if user and user[4]:  # is_super_admin
-            query = type('Query', (), {
-                'data': 'admin_add',
-                'from_user': update.effective_user,
-                'message': update.message,
-                'answer': lambda: None,
-                'edit_message_text': lambda text, reply_markup=None: None
-            })()
-            await show_add_admin_menu(query)
-        return
-    elif text == "📋 Запросы на удаление":
-        user = get_user(user_id)
-        if user and user[4]:  # is_super_admin
-            query = type('Query', (), {
-                'data': 'admin_requests',
-                'from_user': update.effective_user,
-                'message': update.message,
-                'answer': lambda: None,
-                'edit_message_text': lambda text, reply_markup=None: None
-            })()
-            await show_delete_requests(query)
-        return
-    elif text == "👑 Заявки в админы":
-        user = get_user(user_id)
-        if user and user[4]:  # is_super_admin
-            query = type('Query', (), {
-                'data': 'admin_admin_requests',
-                'from_user': update.effective_user,
-                'message': update.message,
-                'answer': lambda: None,
-                'edit_message_text': lambda text, reply_markup=None: None
-            })()
-            await show_admin_requests(query)
-        return
-    elif text == "⭐ Управление супер-админами":
-        user = get_user(user_id)
-        if user and user[4]:  # is_super_admin
-            query = type('Query', (), {
-                'data': 'assign_super_admin_menu',
-                'from_user': update.effective_user,
-                'message': update.message,
-                'answer': lambda: None,
-                'edit_message_text': lambda text, reply_markup=None: None
-            })()
-            await show_assign_super_admin_menu(query)
-        return
-    
-    # Обработка кнопок из меню удаления
-    elif text == "👤 Запросить удаление сотрудника":
-        user = get_user(user_id)
-        if user and (user[3] or user[4]):
-            query = type('Query', (), {
-                'data': 'delete_employee_menu',
-                'from_user': update.effective_user,
-                'message': update.message,
-                'answer': lambda: None,
-                'edit_message_text': lambda text, reply_markup=None: None
-            })()
-            await show_delete_employee_menu(query)
-        return
-    elif text == "🏪 Запросить удаление магазина":
-        user = get_user(user_id)
-        if user and (user[3] or user[4]):
-            query = type('Query', (), {
-                'data': 'delete_store_menu',
-                'from_user': update.effective_user,
-                'message': update.message,
-                'answer': lambda: None,
-                'edit_message_text': lambda text, reply_markup=None: None
-            })()
-            await show_delete_store_request_menu(query)
-        return
-    
-    # Обработка кнопки запроса админки
-    elif text == "👑 Запросить права администратора":
-        user = get_user(user_id)
-        if not user:
-            await update.message.reply_text("❌ Сначала зарегистрируйтесь через /start")
-            return
-        
-        full_name, position, store, is_admin, is_super_admin, can_request_admin = user
-        
-        if is_admin or is_super_admin:
-            await update.message.reply_text("❌ Вы уже являетесь администратором")
-            return
-        
-        if not can_request_admin:
-            await update.message.reply_text("❌ У вас нет прав для запроса администраторских полномочий")
-            return
-        
-        await handle_admin_request_from_message(update, context, user_id, user)
-
-# Функция для обработки заявки на админа из сообщения
-async def handle_admin_request_from_message(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, user_info: Tuple):
-    """Обработка заявки на становление администратором из сообщения"""
-    full_name, position, store, is_admin, is_super_admin, can_request_admin = user_info
-    
-    # Проверяем, нет ли уже активной заявки
-    conn = sqlite3.connect('timesheet.db')
-    cursor = conn.cursor()
-    cursor.execute('''
-        SELECT id FROM admin_requests 
-        WHERE user_id = ? AND status = 'pending'
-    ''', (user_id,))
-    
-    existing = cursor.fetchone()
-    
-    if existing:
-        await update.message.reply_text(
-            "❌ У вас уже есть активная заявка на становление администратором"
-        )
-        conn.close()
-        return
-    
-    # Создаем заявку
-    cursor.execute('''
-        INSERT INTO admin_requests 
-        (request_date, user_id, user_name, user_position, user_store, status)
-        VALUES (?, ?, ?, ?, ?, ?)
-    ''', (get_today_date_utc8(), user_id, full_name, position, store, 'pending'))
-    
-    conn.commit()
-    conn.close()
-    
-    await update.message.reply_text(
-        "✅ Заявка на становление администратором отправлена!\n"
-        "Ожидайте решения супер-администратора."
-    )
-    
-    # Уведомляем супер-админов
-    super_admins = get_super_admins()
-    for admin_id, admin_name in super_admins:
-        try:
-            await update.message.bot.send_message(
-                admin_id,
-                f"👑 Новая заявка на становление администратором!\n\n"
-                f"От: {full_name}\n"
-                f"Должность: {position}\n"
-                f"Магазин: {store}\n"
-                f"ID: {user_id}\n\n"
-                f"Используйте 👑 Панель админа для рассмотрения заявки."
-            )
-        except Exception as e:
-            logger.error(f"Failed to notify super admin {admin_id}: {e}")
-
-# Вспомогательные функции для административных панелей
+# Остальные вспомогательные функции
 async def show_admin_panel(query):
     """Показать панель администратора"""
     keyboard = [
@@ -2319,7 +2250,7 @@ async def show_admin_panel(query):
         [InlineKeyboardButton("✅ Закрыть смену", callback_data="admin_checkout")],
         [InlineKeyboardButton("📊 Мой табель", callback_data="admin_timesheet")],
         [InlineKeyboardButton("📈 Моя статистика", callback_data="admin_stats")],
-        [InlineKeyboardButton("👥 Все сотрудники", callback_data="admin_list")],
+        [InlineKeyboardButton("👥 Управление сотрудниками", callback_data="admin_employees_menu")],
         [InlineKeyboardButton("📊 По магазинам", callback_data="admin_by_store")],
         [InlineKeyboardButton("🔓 Открытые смены", callback_data="admin_open_shifts")],
         [InlineKeyboardButton("📅 Выбрать период", callback_data="period_selection")],
@@ -2338,7 +2269,6 @@ async def show_admin_panel(query):
         reply_markup=reply_markup
     )
 
-# ИСПРАВЛЕНО: Функция для отображения сотрудников по магазинам с отметками о сменах
 async def show_employees_by_store(query):
     """Показать сотрудников по магазинам с отметками о сменах"""
     conn = sqlite3.connect('timesheet.db')
@@ -2409,7 +2339,6 @@ async def show_employees_by_store(query):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
 
-# ИСПРАВЛЕНО: Функция для отображения статистики по магазинам с открытыми/закрытыми сменами
 async def show_store_stats(query):
     """Показать статистику по магазинам с открытыми/закрытыми сменами"""
     conn = sqlite3.connect('timesheet.db')
@@ -2556,400 +2485,6 @@ async def show_export_options(query, days):
         reply_markup=reply_markup
     )
 
-async def show_confirm_menu(query):
-    """Меню подтверждения смен"""
-    keyboard = [
-        [InlineKeyboardButton("📋 Неподтвержденные сегодня", callback_data="confirm_today")],
-        [InlineKeyboardButton("📅 Неподтвержденные за период", callback_data="confirm_period")],
-        [InlineKeyboardButton("✅ Подтвердить все сегодня", callback_data="confirm_all_today")],
-        [InlineKeyboardButton("🏪 По магазинам", callback_data="confirm_by_store")],
-        [InlineKeyboardButton("📊 Статистика подтверждений", callback_data="confirm_stats")],
-        [InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")]
-    ]
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text(
-        "✅ ПОДТВЕРЖДЕНИЕ СМЕН\n\n"
-        "Выберите действие:",
-        reply_markup=reply_markup
-    )
-
-async def show_delete_menu(query):
-    """Меню запросов на удаление"""
-    keyboard = [
-        [InlineKeyboardButton("👤 Запросить удаление сотрудника", callback_data="delete_employee_menu")],
-        [InlineKeyboardButton("🏪 Запросить удаление магазина", callback_data="delete_store_menu")],
-        [InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")]
-    ]
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text(
-        "🗑 ЗАПРОС УДАЛЕНИЯ\n\n"
-        "Выберите тип удаления:",
-        reply_markup=reply_markup
-    )
-
-async def show_positions_menu(query):
-    """Меню управления должностями"""
-    keyboard = [
-        [InlineKeyboardButton("➕ Создать должность", callback_data="create_position")],
-        [InlineKeyboardButton("📋 Список должностей", callback_data="list_positions")],
-        [InlineKeyboardButton("🗑 Удалить должность", callback_data="delete_position_menu")],
-        [InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")]
-    ]
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text(
-        "📋 УПРАВЛЕНИЕ ДОЛЖНОСТЯМИ\n\n"
-        "Выберите действие:",
-        reply_markup=reply_markup
-    )
-
-async def list_positions(query):
-    """Показать список должностей"""
-    positions = get_positions()
-    
-    if not positions:
-        await query.edit_message_text("📋 Список должностей пуст")
-        return
-    
-    text = "📋 СПИСОК ДОЛЖНОСТЕЙ\n\n"
-    for i, pos in enumerate(positions, 1):
-        text += f"{i}. {pos}\n"
-    
-    await query.edit_message_text(text)
-    
-    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="admin_positions_menu")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
-
-async def show_delete_position_menu(query):
-    """Меню удаления должностей - показывает все должности"""
-    positions = get_positions()
-    
-    if not positions:
-        await query.edit_message_text("📋 Нет должностей для удаления")
-        return
-    
-    # Получаем информацию о том, какие должности используются
-    conn = sqlite3.connect('timesheet.db')
-    cursor = conn.cursor()
-    
-    text = "🗑 ВЫБОР ДОЛЖНОСТИ ДЛЯ УДАЛЕНИЯ\n\n"
-    text += "❌ - нельзя удалить (используется)\n"
-    text += "✅ - можно удалить\n\n"
-    
-    keyboard = []
-    for pos in positions:
-        cursor.execute("SELECT COUNT(*) FROM employees WHERE position = ?", (pos,))
-        count = cursor.fetchone()[0]
-        
-        if count == 0:
-            # Должность не используется - можно удалить
-            text += f"✅ {pos}\n"
-            keyboard.append([
-                InlineKeyboardButton(f"🗑 {pos}", callback_data=f"delete_position_{pos}")
-            ])
-        else:
-            # Должность используется - нельзя удалить
-            text += f"❌ {pos} (используется {count} сотрудниками)\n"
-    
-    conn.close()
-    
-    if not keyboard:
-        text += "\n❌ Нет должностей, которые можно удалить\n(все должности используются сотрудниками)"
-    
-    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="admin_positions_menu")])
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    if len(text) > MAX_MESSAGE_LENGTH:
-        await query.edit_message_text(text[:MAX_MESSAGE_LENGTH])
-        remaining = text[MAX_MESSAGE_LENGTH:]
-        while remaining:
-            await query.message.reply_text(remaining[:MAX_MESSAGE_LENGTH])
-            remaining = remaining[MAX_MESSAGE_LENGTH:]
-        await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
-    else:
-        await query.edit_message_text(text, reply_markup=reply_markup)
-
-async def create_position(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Создание новой должности"""
-    user_id = update.effective_user.id
-    position_name = update.message.text.strip()
-    
-    conn = sqlite3.connect('timesheet.db')
-    cursor = conn.cursor()
-    
-    try:
-        cursor.execute('''
-            INSERT INTO positions (name, created_by, created_date)
-            VALUES (?, ?, ?)
-        ''', (position_name, user_id, get_today_date_utc8()))
-        conn.commit()
-        await update.message.reply_text(f"✅ Должность '{position_name}' создана!")
-    except sqlite3.IntegrityError:
-        await update.message.reply_text(f"❌ Должность '{position_name}' уже существует")
-    finally:
-        conn.close()
-    
-    keyboard = [
-        [InlineKeyboardButton("◀️ Назад в управление должностями", callback_data="admin_positions_menu")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(
-        "Выберите действие:",
-        reply_markup=reply_markup
-    )
-    
-    return ConversationHandler.END
-
-async def delete_position(query, position_name):
-    """Удаление должности"""
-    conn = sqlite3.connect('timesheet.db')
-    cursor = conn.cursor()
-    
-    # Проверяем, используется ли должность
-    cursor.execute("SELECT COUNT(*) FROM employees WHERE position = ?", (position_name,))
-    count = cursor.fetchone()[0]
-    
-    if count > 0:
-        await query.edit_message_text(
-            f"❌ Невозможно удалить должность '{position_name}'\n"
-            f"Она используется {count} сотрудником(ами)"
-        )
-        conn.close()
-        return
-    
-    # Удаляем должность
-    cursor.execute("DELETE FROM positions WHERE name = ?", (position_name,))
-    conn.commit()
-    conn.close()
-    
-    await query.edit_message_text(f"✅ Должность '{position_name}' удалена")
-    
-    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="admin_positions_menu")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
-
-async def show_stores_menu(query):
-    """Меню управления магазинами"""
-    keyboard = [
-        [InlineKeyboardButton("➕ Создать магазин", callback_data="create_store")],
-        [InlineKeyboardButton("📋 Список магазинов", callback_data="list_stores")],
-        [InlineKeyboardButton("🗑 Удалить магазин", callback_data="delete_store_from_list_menu")],
-        [InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")]
-    ]
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.edit_message_text(
-        "🏪 УПРАВЛЕНИЕ МАГАЗИНАМИ\n\n"
-        "Выберите действие:",
-        reply_markup=reply_markup
-    )
-
-# Меню добавления администратора
-async def show_add_admin_menu(query):
-    """Меню добавления администратора"""
-    conn = sqlite3.connect('timesheet.db')
-    cursor = conn.cursor()
-    
-    cursor.execute('''
-        SELECT user_id, full_name, position, store 
-        FROM employees 
-        WHERE is_admin = 0 AND is_super_admin = 0
-        ORDER BY store, full_name
-    ''')
-    
-    employees = cursor.fetchall()
-    conn.close()
-    
-    if not employees:
-        await query.edit_message_text(
-            "👥 Нет обычных сотрудников для назначения администраторами"
-        )
-        return
-    
-    text = "➕ ВЫБОР СОТРУДНИКА ДЛЯ НАЗНАЧЕНИЯ АДМИНИСТРАТОРОМ\n\n"
-    
-    keyboard = []
-    for emp in employees:
-        user_id, full_name, position, store = emp
-        text += f"👤 {full_name}\n"
-        text += f"   {position} | {store}\n\n"
-        
-        keyboard.append([
-            InlineKeyboardButton(f"👑 {full_name}", 
-                               callback_data=f"make_admin_{user_id}")
-        ])
-    
-    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")])
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    if len(text) > MAX_MESSAGE_LENGTH:
-        await query.edit_message_text(text[:MAX_MESSAGE_LENGTH])
-        remaining = text[MAX_MESSAGE_LENGTH:]
-        while remaining:
-            await query.message.reply_text(remaining[:MAX_MESSAGE_LENGTH])
-            remaining = remaining[MAX_MESSAGE_LENGTH:]
-        await query.message.reply_text("Выберите сотрудника:", reply_markup=reply_markup)
-    else:
-        await query.edit_message_text(text, reply_markup=reply_markup)
-
-# Функции для управления магазинами
-async def create_store_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Получение названия магазина"""
-    store_name = update.message.text.strip()
-    context.user_data['new_store_name'] = store_name
-    
-    await update.message.reply_text(
-        f"🏪 Название: {store_name}\n\n"
-        f"✏️ Теперь введите адрес магазина:"
-    )
-    return CREATE_STORE_ADDRESS
-
-async def create_store_address(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Создание магазина с адресом"""
-    user_id = update.effective_user.id
-    store_address = update.message.text.strip()
-    store_name = context.user_data.get('new_store_name')
-    
-    if not store_name:
-        await update.message.reply_text("❌ Ошибка создания. Начните заново.")
-        return ConversationHandler.END
-    
-    conn = sqlite3.connect('timesheet.db')
-    cursor = conn.cursor()
-    
-    try:
-        cursor.execute('''
-            INSERT INTO stores (name, address, created_by, created_date)
-            VALUES (?, ?, ?, ?)
-        ''', (store_name, store_address, user_id, get_today_date_utc8()))
-        conn.commit()
-        await update.message.reply_text(
-            f"✅ Магазин создан!\n\n"
-            f"Название: {store_name}\n"
-            f"Адрес: {store_address}"
-        )
-    except sqlite3.IntegrityError:
-        await update.message.reply_text(f"❌ Магазин '{store_name}' уже существует")
-    finally:
-        conn.close()
-    
-    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="admin_stores_menu")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text(
-        "Выберите действие:",
-        reply_markup=reply_markup
-    )
-    
-    context.user_data.pop('new_store_name', None)
-    
-    return ConversationHandler.END
-
-async def list_stores(query):
-    """Показать список магазинов"""
-    stores = get_stores()
-    
-    if not stores:
-        await query.edit_message_text("🏪 Список магазинов пуст")
-        return
-    
-    text = "🏪 СПИСОК МАГАЗИНОВ\n\n"
-    for i, (name, address) in enumerate(stores, 1):
-        text += f"{i}. {name}\n   📍 {address}\n\n"
-    
-    await query.edit_message_text(text)
-    
-    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="admin_stores_menu")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
-
-# Функция для отображения меню удаления магазинов
-async def show_delete_store_menu(query):
-    """Меню удаления магазинов"""
-    stores = get_stores()
-    
-    if not stores:
-        await query.edit_message_text("🏪 Нет магазинов для удаления")
-        return
-    
-    # Получаем информацию о том, какие магазины используются
-    conn = sqlite3.connect('timesheet.db')
-    cursor = conn.cursor()
-    
-    text = "🗑 ВЫБОР МАГАЗИНА ДЛЯ УДАЛЕНИЯ\n\n"
-    text += "❌ - нельзя удалить (есть сотрудники)\n"
-    text += "✅ - можно удалить\n\n"
-    
-    keyboard = []
-    for store_name, address in stores:
-        cursor.execute("SELECT COUNT(*) FROM employees WHERE store = ?", (store_name,))
-        count = cursor.fetchone()[0]
-        
-        if count == 0:
-            # Магазин не используется - можно удалить
-            text += f"✅ {store_name}\n"
-            text += f"   📍 {address}\n\n"
-            keyboard.append([
-                InlineKeyboardButton(f"🗑 {store_name}", callback_data=f"delete_store_list_{store_name}")
-            ])
-        else:
-            # Магазин используется - нельзя удалить
-            text += f"❌ {store_name} (используется {count} сотрудниками)\n"
-            text += f"   📍 {address}\n\n"
-    
-    conn.close()
-    
-    if not keyboard:
-        text += "\n❌ Нет магазинов, которые можно удалить\n(во всех магазинах есть сотрудники)"
-    
-    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="admin_stores_menu")])
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    if len(text) > MAX_MESSAGE_LENGTH:
-        await query.edit_message_text(text[:MAX_MESSAGE_LENGTH])
-        remaining = text[MAX_MESSAGE_LENGTH:]
-        while remaining:
-            await query.message.reply_text(remaining[:MAX_MESSAGE_LENGTH])
-            remaining = remaining[MAX_MESSAGE_LENGTH:]
-        await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
-    else:
-        await query.edit_message_text(text, reply_markup=reply_markup)
-
-# Функция для удаления магазина
-async def delete_store(query, store_name):
-    """Удаление магазина"""
-    conn = sqlite3.connect('timesheet.db')
-    cursor = conn.cursor()
-    
-    # Проверяем, используется ли магазин
-    cursor.execute("SELECT COUNT(*) FROM employees WHERE store = ?", (store_name,))
-    count = cursor.fetchone()[0]
-    
-    if count > 0:
-        await query.edit_message_text(
-            f"❌ Невозможно удалить магазин '{store_name}'\n"
-            f"В нем работает {count} сотрудников"
-        )
-        conn.close()
-        return
-    
-    # Удаляем магазин
-    cursor.execute("DELETE FROM stores WHERE name = ?", (store_name,))
-    conn.commit()
-    conn.close()
-    
-    await query.edit_message_text(f"✅ Магазин '{store_name}' удален")
-    
-    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="admin_stores_menu")]]
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
-
-# Функции для экспорта CSV
 async def export_csv_period(query, days, confirmed_only=True):
     """Экспорт данных за период"""
     end_date = get_today_date_utc8()
@@ -3024,7 +2559,24 @@ async def export_csv_period(query, days, confirmed_only=True):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
 
-# Функции для подтверждения смен
+async def show_confirm_menu(query):
+    """Меню подтверждения смен"""
+    keyboard = [
+        [InlineKeyboardButton("📋 Неподтвержденные сегодня", callback_data="confirm_today")],
+        [InlineKeyboardButton("📅 Неподтвержденные за период", callback_data="confirm_period")],
+        [InlineKeyboardButton("✅ Подтвердить все сегодня", callback_data="confirm_all_today")],
+        [InlineKeyboardButton("🏪 По магазинам", callback_data="confirm_by_store")],
+        [InlineKeyboardButton("📊 Статистика подтверждений", callback_data="confirm_stats")],
+        [InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")]
+    ]
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(
+        "✅ ПОДТВЕРЖДЕНИЕ СМЕН\n\n"
+        "Выберите действие:",
+        reply_markup=reply_markup
+    )
+
 async def show_unconfirmed_today(query):
     """Показать неподтвержденные смены за сегодня"""
     today = get_today_date_utc8()
@@ -3312,7 +2864,304 @@ async def show_confirm_stats(query):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
 
-# Функции для запросов на удаление
+# Функции для управления должностями
+async def show_positions_menu(query):
+    """Меню управления должностями"""
+    keyboard = [
+        [InlineKeyboardButton("➕ Создать должность", callback_data="create_position")],
+        [InlineKeyboardButton("📋 Список должностей", callback_data="list_positions")],
+        [InlineKeyboardButton("🗑 Удалить должность", callback_data="delete_position_menu")],
+        [InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")]
+    ]
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(
+        "📋 УПРАВЛЕНИЕ ДОЛЖНОСТЯМИ\n\n"
+        "Выберите действие:",
+        reply_markup=reply_markup
+    )
+
+async def list_positions(query):
+    """Показать список должностей"""
+    positions = get_positions()
+    
+    if not positions:
+        await query.edit_message_text("📋 Список должностей пуст")
+        return
+    
+    text = "📋 СПИСОК ДОЛЖНОСТЕЙ\n\n"
+    for i, pos in enumerate(positions, 1):
+        text += f"{i}. {pos}\n"
+    
+    await query.edit_message_text(text)
+    
+    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="admin_positions_menu")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
+
+async def show_delete_position_menu(query):
+    """Меню удаления должностей - показывает все должности"""
+    positions = get_positions()
+    
+    if not positions:
+        await query.edit_message_text("📋 Нет должностей для удаления")
+        return
+    
+    # Получаем информацию о том, какие должности используются
+    conn = sqlite3.connect('timesheet.db')
+    cursor = conn.cursor()
+    
+    text = "🗑 ВЫБОР ДОЛЖНОСТИ ДЛЯ УДАЛЕНИЯ\n\n"
+    text += "❌ - нельзя удалить (используется)\n"
+    text += "✅ - можно удалить\n\n"
+    
+    keyboard = []
+    for pos in positions:
+        cursor.execute("SELECT COUNT(*) FROM employees WHERE position = ?", (pos,))
+        count = cursor.fetchone()[0]
+        
+        if count == 0:
+            # Должность не используется - можно удалить
+            text += f"✅ {pos}\n"
+            keyboard.append([
+                InlineKeyboardButton(f"🗑 {pos}", callback_data=f"delete_position_{pos}")
+            ])
+        else:
+            # Должность используется - нельзя удалить
+            text += f"❌ {pos} (используется {count} сотрудниками)\n"
+    
+    conn.close()
+    
+    if not keyboard:
+        text += "\n❌ Нет должностей, которые можно удалить\n(все должности используются сотрудниками)"
+    
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="admin_positions_menu")])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    if len(text) > MAX_MESSAGE_LENGTH:
+        await query.edit_message_text(text[:MAX_MESSAGE_LENGTH])
+        remaining = text[MAX_MESSAGE_LENGTH:]
+        while remaining:
+            await query.message.reply_text(remaining[:MAX_MESSAGE_LENGTH])
+            remaining = remaining[MAX_MESSAGE_LENGTH:]
+        await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
+    else:
+        await query.edit_message_text(text, reply_markup=reply_markup)
+
+async def create_position(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Создание новой должности"""
+    user_id = update.effective_user.id
+    position_name = update.message.text.strip()
+    
+    conn = sqlite3.connect('timesheet.db')
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute('''
+            INSERT INTO positions (name, created_by, created_date)
+            VALUES (?, ?, ?)
+        ''', (position_name, user_id, get_today_date_utc8()))
+        conn.commit()
+        await update.message.reply_text(f"✅ Должность '{position_name}' создана!")
+    except sqlite3.IntegrityError:
+        await update.message.reply_text(f"❌ Должность '{position_name}' уже существует")
+    finally:
+        conn.close()
+    
+    keyboard = [
+        [InlineKeyboardButton("◀️ Назад в управление должностями", callback_data="admin_positions_menu")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(
+        "Выберите действие:",
+        reply_markup=reply_markup
+    )
+    
+    return ConversationHandler.END
+
+# Функции для управления магазинами
+async def show_stores_menu(query):
+    """Меню управления магазинами"""
+    keyboard = [
+        [InlineKeyboardButton("➕ Создать магазин", callback_data="create_store")],
+        [InlineKeyboardButton("📋 Список магазинов", callback_data="list_stores")],
+        [InlineKeyboardButton("🗑 Удалить магазин", callback_data="delete_store_from_list_menu")],
+        [InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")]
+    ]
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(
+        "🏪 УПРАВЛЕНИЕ МАГАЗИНАМИ\n\n"
+        "Выберите действие:",
+        reply_markup=reply_markup
+    )
+
+async def create_store_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Получение названия магазина"""
+    store_name = update.message.text.strip()
+    context.user_data['new_store_name'] = store_name
+    
+    await update.message.reply_text(
+        f"🏪 Название: {store_name}\n\n"
+        f"✏️ Теперь введите адрес магазина:"
+    )
+    return CREATE_STORE_ADDRESS
+
+async def create_store_address(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Создание магазина с адресом"""
+    user_id = update.effective_user.id
+    store_address = update.message.text.strip()
+    store_name = context.user_data.get('new_store_name')
+    
+    if not store_name:
+        await update.message.reply_text("❌ Ошибка создания. Начните заново.")
+        return ConversationHandler.END
+    
+    conn = sqlite3.connect('timesheet.db')
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute('''
+            INSERT INTO stores (name, address, created_by, created_date)
+            VALUES (?, ?, ?, ?)
+        ''', (store_name, store_address, user_id, get_today_date_utc8()))
+        conn.commit()
+        await update.message.reply_text(
+            f"✅ Магазин создан!\n\n"
+            f"Название: {store_name}\n"
+            f"Адрес: {store_address}"
+        )
+    except sqlite3.IntegrityError:
+        await update.message.reply_text(f"❌ Магазин '{store_name}' уже существует")
+    finally:
+        conn.close()
+    
+    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="admin_stores_menu")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(
+        "Выберите действие:",
+        reply_markup=reply_markup
+    )
+    
+    context.user_data.pop('new_store_name', None)
+    
+    return ConversationHandler.END
+
+async def list_stores(query):
+    """Показать список магазинов"""
+    stores = get_stores()
+    
+    if not stores:
+        await query.edit_message_text("🏪 Список магазинов пуст")
+        return
+    
+    text = "🏪 СПИСОК МАГАЗИНОВ\n\n"
+    for i, (name, address) in enumerate(stores, 1):
+        text += f"{i}. {name}\n   📍 {address}\n\n"
+    
+    await query.edit_message_text(text)
+    
+    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="admin_stores_menu")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
+
+async def show_delete_store_menu(query):
+    """Меню удаления магазинов"""
+    stores = get_stores()
+    
+    if not stores:
+        await query.edit_message_text("🏪 Нет магазинов для удаления")
+        return
+    
+    # Получаем информацию о том, какие магазины используются
+    conn = sqlite3.connect('timesheet.db')
+    cursor = conn.cursor()
+    
+    text = "🗑 ВЫБОР МАГАЗИНА ДЛЯ УДАЛЕНИЯ\n\n"
+    text += "❌ - нельзя удалить (есть сотрудники)\n"
+    text += "✅ - можно удалить\n\n"
+    
+    keyboard = []
+    for store_name, address in stores:
+        cursor.execute("SELECT COUNT(*) FROM employees WHERE store = ?", (store_name,))
+        count = cursor.fetchone()[0]
+        
+        if count == 0:
+            # Магазин не используется - можно удалить
+            text += f"✅ {store_name}\n"
+            text += f"   📍 {address}\n\n"
+            keyboard.append([
+                InlineKeyboardButton(f"🗑 {store_name}", callback_data=f"delete_store_list_{store_name}")
+            ])
+        else:
+            # Магазин используется - нельзя удалить
+            text += f"❌ {store_name} (используется {count} сотрудниками)\n"
+            text += f"   📍 {address}\n\n"
+    
+    conn.close()
+    
+    if not keyboard:
+        text += "\n❌ Нет магазинов, которые можно удалить\n(во всех магазинах есть сотрудники)"
+    
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="admin_stores_menu")])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    if len(text) > MAX_MESSAGE_LENGTH:
+        await query.edit_message_text(text[:MAX_MESSAGE_LENGTH])
+        remaining = text[MAX_MESSAGE_LENGTH:]
+        while remaining:
+            await query.message.reply_text(remaining[:MAX_MESSAGE_LENGTH])
+            remaining = remaining[MAX_MESSAGE_LENGTH:]
+        await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
+    else:
+        await query.edit_message_text(text, reply_markup=reply_markup)
+
+async def delete_store(query, store_name):
+    """Удаление магазина"""
+    conn = sqlite3.connect('timesheet.db')
+    cursor = conn.cursor()
+    
+    # Проверяем, используется ли магазин
+    cursor.execute("SELECT COUNT(*) FROM employees WHERE store = ?", (store_name,))
+    count = cursor.fetchone()[0]
+    
+    if count > 0:
+        await query.edit_message_text(
+            f"❌ Невозможно удалить магазин '{store_name}'\n"
+            f"В нем работает {count} сотрудников"
+        )
+        conn.close()
+        return
+    
+    # Удаляем магазин
+    cursor.execute("DELETE FROM stores WHERE name = ?", (store_name,))
+    conn.commit()
+    conn.close()
+    
+    await query.edit_message_text(f"✅ Магазин '{store_name}' удален")
+    
+    keyboard = [[InlineKeyboardButton("◀️ Назад", callback_data="admin_stores_menu")]]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
+
+# Функции для меню удаления
+async def show_delete_menu(query):
+    """Меню запросов на удаление"""
+    keyboard = [
+        [InlineKeyboardButton("👤 Запросить удаление сотрудника", callback_data="delete_employee_menu")],
+        [InlineKeyboardButton("🏪 Запросить удаление магазина", callback_data="delete_store_menu")],
+        [InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")]
+    ]
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text(
+        "🗑 ЗАПРОС УДАЛЕНИЯ\n\n"
+        "Выберите тип удаления:",
+        reply_markup=reply_markup
+    )
+
 async def show_delete_employee_menu(query):
     """Меню выбора сотрудника для удаления"""
     conn = sqlite3.connect('timesheet.db')
@@ -3368,7 +3217,6 @@ async def show_delete_employee_menu(query):
     else:
         await query.edit_message_text(text, reply_markup=reply_markup)
 
-# Функция для отображения меню выбора магазина для удаления
 async def show_delete_store_request_menu(query):
     """Меню выбора магазина для удаления"""
     stores = get_stores()
@@ -3421,10 +3269,9 @@ async def show_delete_store_request_menu(query):
     else:
         await query.edit_message_text(text, reply_markup=reply_markup)
 
-# Функция для создания запроса на удаление
+# Функции для запросов на удаление
 async def create_delete_request(query, requester_id, requester_name, target_type, target_id):
     """Создание запроса на удаление"""
-    # Проверяем, нет ли уже активного запроса
     conn = sqlite3.connect('timesheet.db')
     cursor = conn.cursor()
     cursor.execute('''
@@ -4054,6 +3901,55 @@ async def list_super_admins(query):
     reply_markup = InlineKeyboardMarkup(keyboard)
     await query.message.reply_text("Выберите действие:", reply_markup=reply_markup)
 
+# Функции для добавления администраторов
+async def show_add_admin_menu(query):
+    """Меню добавления администратора"""
+    conn = sqlite3.connect('timesheet.db')
+    cursor = conn.cursor()
+    
+    cursor.execute('''
+        SELECT user_id, full_name, position, store 
+        FROM employees 
+        WHERE is_admin = 0 AND is_super_admin = 0
+        ORDER BY store, full_name
+    ''')
+    
+    employees = cursor.fetchall()
+    conn.close()
+    
+    if not employees:
+        await query.edit_message_text(
+            "👥 Нет обычных сотрудников для назначения администраторами"
+        )
+        return
+    
+    text = "➕ ВЫБОР СОТРУДНИКА ДЛЯ НАЗНАЧЕНИЯ АДМИНИСТРАТОРОМ\n\n"
+    
+    keyboard = []
+    for emp in employees:
+        user_id, full_name, position, store = emp
+        text += f"👤 {full_name}\n"
+        text += f"   {position} | {store}\n\n"
+        
+        keyboard.append([
+            InlineKeyboardButton(f"👑 {full_name}", 
+                               callback_data=f"make_admin_{user_id}")
+        ])
+    
+    keyboard.append([InlineKeyboardButton("◀️ Назад", callback_data="back_to_admin")])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    if len(text) > MAX_MESSAGE_LENGTH:
+        await query.edit_message_text(text[:MAX_MESSAGE_LENGTH])
+        remaining = text[MAX_MESSAGE_LENGTH:]
+        while remaining:
+            await query.message.reply_text(remaining[:MAX_MESSAGE_LENGTH])
+            remaining = remaining[MAX_MESSAGE_LENGTH:]
+        await query.message.reply_text("Выберите сотрудника:", reply_markup=reply_markup)
+    else:
+        await query.edit_message_text(text, reply_markup=reply_markup)
+
 # Обработчики текстовых сообщений для ConversationHandler
 async def get_custom_period_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Получение начальной даты для пользовательского периода"""
@@ -4116,6 +4012,310 @@ async def get_custom_period_end(update: Update, context: ContextTypes.DEFAULT_TY
         )
         return CUSTOM_PERIOD_END
 
+# Обработчик текстовых сообщений
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка текстовых сообщений"""
+    text = update.message.text
+    user_id = update.effective_user.id
+    
+    logger.info(f"Получено сообщение от {user_id}: {text}")
+    
+    # Проверяем, не находимся ли мы в каком-либо ConversationHandler
+    if context.user_data.get('conversation_state'):
+        logger.info(f"Пользователь в состоянии {context.user_data['conversation_state']}, пропускаем обработку")
+        return
+    
+    # Обработка кнопок из нижнего меню
+    if text == "🏠 Главное меню":
+        await start(update, context)
+        return
+    elif text == "👑 Панель админа":
+        # Проверяем, есть ли права администратора
+        user = get_user(user_id)
+        if user and (user[3] or user[4]):  # is_admin или is_super_admin
+            await admin_panel(update, context)
+        else:
+            await update.message.reply_text("❌ У вас нет прав доступа к панели администратора")
+        return
+    elif text == "✅ Открыть смену":
+        await checkin(update, context)
+        return
+    elif text == "✅ Закрыть смену":
+        await checkout(update, context)
+        return
+    elif text == "📊 Мой табель":
+        await timesheet(update, context)
+        return
+    elif text == "📈 Моя статистика":
+        await stats(update, context)
+        return
+    elif text == "👥 Все сотрудники":
+        user = get_user(user_id)
+        if user and (user[3] or user[4]):
+            query = type('Query', (), {
+                'data': 'admin_list',
+                'from_user': update.effective_user,
+                'message': update.message,
+                'answer': lambda: None,
+                'edit_message_text': lambda text, reply_markup=None: None
+            })()
+            await show_all_employees(query)
+        return
+    elif text == "📊 По магазинам":
+        user = get_user(user_id)
+        if user and (user[3] or user[4]):
+            query = type('Query', (), {
+                'data': 'admin_by_store',
+                'from_user': update.effective_user,
+                'message': update.message,
+                'answer': lambda: None,
+                'edit_message_text': lambda text, reply_markup=None: None
+            })()
+            await show_employees_by_store(query)
+        return
+    elif text == "🔓 Открытые смены":
+        user = get_user(user_id)
+        if user and (user[3] or user[4]):
+            await show_open_shifts(update, context)
+        return
+    elif text == "📅 Выбрать период":
+        user = get_user(user_id)
+        if user and (user[3] or user[4]):
+            query = type('Query', (), {
+                'data': 'period_selection',
+                'from_user': update.effective_user,
+                'message': update.message,
+                'answer': lambda: None,
+                'edit_message_text': lambda text, reply_markup=None: None
+            })()
+            await show_period_selection(query)
+        return
+    elif text == "📈 Статистика по магазинам":
+        user = get_user(user_id)
+        if user and (user[3] or user[4]):
+            query = type('Query', (), {
+                'data': 'admin_store_stats',
+                'from_user': update.effective_user,
+                'message': update.message,
+                'answer': lambda: None,
+                'edit_message_text': lambda text, reply_markup=None: None
+            })()
+            await show_store_stats(query)
+        return
+    elif text == "✅ Подтверждение смен":
+        user = get_user(user_id)
+        if user and (user[3] or user[4]):
+            query = type('Query', (), {
+                'data': 'admin_confirm',
+                'from_user': update.effective_user,
+                'message': update.message,
+                'answer': lambda: None,
+                'edit_message_text': lambda text, reply_markup=None: None
+            })()
+            await show_confirm_menu(query)
+        return
+    elif text == "🗑 Запросить удаление":
+        user = get_user(user_id)
+        if user and (user[3] or user[4]):
+            query = type('Query', (), {
+                'data': 'admin_delete_menu',
+                'from_user': update.effective_user,
+                'message': update.message,
+                'answer': lambda: None,
+                'edit_message_text': lambda text, reply_markup=None: None
+            })()
+            await show_delete_menu(query)
+        return
+    elif text == "📋 Управление должностями":
+        user = get_user(user_id)
+        if user and (user[3] or user[4]):
+            query = type('Query', (), {
+                'data': 'admin_positions_menu',
+                'from_user': update.effective_user,
+                'message': update.message,
+                'answer': lambda: None,
+                'edit_message_text': lambda text, reply_markup=None: None
+            })()
+            await show_positions_menu(query)
+        return
+    elif text == "🏪 Управление магазинами":
+        user = get_user(user_id)
+        if user and (user[3] or user[4]):
+            query = type('Query', (), {
+                'data': 'admin_stores_menu',
+                'from_user': update.effective_user,
+                'message': update.message,
+                'answer': lambda: None,
+                'edit_message_text': lambda text, reply_markup=None: None
+            })()
+            await show_stores_menu(query)
+        return
+    elif text == "🔄 Управление сменами":
+        user = get_user(user_id)
+        if user and (user[3] or user[4]):
+            query = type('Query', (), {
+                'data': 'admin_shifts_menu',
+                'from_user': update.effective_user,
+                'message': update.message,
+                'answer': lambda: None,
+                'edit_message_text': lambda text, reply_markup=None: None
+            })()
+            await show_shifts_menu(update, context)
+        return
+    elif text == "👥 Управление сотрудниками":
+        user = get_user(user_id)
+        if user and (user[3] or user[4]):
+            query = type('Query', (), {
+                'data': 'admin_employees_menu',
+                'from_user': update.effective_user,
+                'message': update.message,
+                'answer': lambda: None,
+                'edit_message_text': lambda text, reply_markup=None: None
+            })()
+            await show_employees_management_menu(update, context)
+        return
+    elif text == "➕ Добавить админа":
+        user = get_user(user_id)
+        if user and user[4]:  # is_super_admin
+            query = type('Query', (), {
+                'data': 'admin_add',
+                'from_user': update.effective_user,
+                'message': update.message,
+                'answer': lambda: None,
+                'edit_message_text': lambda text, reply_markup=None: None
+            })()
+            await show_add_admin_menu(query)
+        return
+    elif text == "📋 Запросы на удаление":
+        user = get_user(user_id)
+        if user and user[4]:  # is_super_admin
+            query = type('Query', (), {
+                'data': 'admin_requests',
+                'from_user': update.effective_user,
+                'message': update.message,
+                'answer': lambda: None,
+                'edit_message_text': lambda text, reply_markup=None: None
+            })()
+            await show_delete_requests(query)
+        return
+    elif text == "👑 Заявки в админы":
+        user = get_user(user_id)
+        if user and user[4]:  # is_super_admin
+            query = type('Query', (), {
+                'data': 'admin_admin_requests',
+                'from_user': update.effective_user,
+                'message': update.message,
+                'answer': lambda: None,
+                'edit_message_text': lambda text, reply_markup=None: None
+            })()
+            await show_admin_requests(query)
+        return
+    elif text == "⭐ Управление супер-админами":
+        user = get_user(user_id)
+        if user and user[4]:  # is_super_admin
+            query = type('Query', (), {
+                'data': 'assign_super_admin_menu',
+                'from_user': update.effective_user,
+                'message': update.message,
+                'answer': lambda: None,
+                'edit_message_text': lambda text, reply_markup=None: None
+            })()
+            await show_assign_super_admin_menu(query)
+        return
+    elif text == "👤 Запросить удаление сотрудника":
+        user = get_user(user_id)
+        if user and (user[3] or user[4]):
+            query = type('Query', (), {
+                'data': 'delete_employee_menu',
+                'from_user': update.effective_user,
+                'message': update.message,
+                'answer': lambda: None,
+                'edit_message_text': lambda text, reply_markup=None: None
+            })()
+            await show_delete_employee_menu(query)
+        return
+    elif text == "🏪 Запросить удаление магазина":
+        user = get_user(user_id)
+        if user and (user[3] or user[4]):
+            query = type('Query', (), {
+                'data': 'delete_store_menu',
+                'from_user': update.effective_user,
+                'message': update.message,
+                'answer': lambda: None,
+                'edit_message_text': lambda text, reply_markup=None: None
+            })()
+            await show_delete_store_request_menu(query)
+        return
+    elif text == "👑 Запросить права администратора":
+        user = get_user(user_id)
+        if not user:
+            await update.message.reply_text("❌ Сначала зарегистрируйтесь через /start")
+            return
+        
+        full_name, position, store, is_admin, is_super_admin, can_request_admin = user
+        
+        if is_admin or is_super_admin:
+            await update.message.reply_text("❌ Вы уже являетесь администратором")
+            return
+        
+        if not can_request_admin:
+            await update.message.reply_text("❌ У вас нет прав для запроса администраторских полномочий")
+            return
+        
+        await handle_admin_request_from_message(update, context, user_id, user)
+
+async def handle_admin_request_from_message(update: Update, context: ContextTypes.DEFAULT_TYPE, user_id: int, user_info: Tuple):
+    """Обработка заявки на становление администратором из сообщения"""
+    full_name, position, store, is_admin, is_super_admin, can_request_admin = user_info
+    
+    # Проверяем, нет ли уже активной заявки
+    conn = sqlite3.connect('timesheet.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT id FROM admin_requests 
+        WHERE user_id = ? AND status = 'pending'
+    ''', (user_id,))
+    
+    existing = cursor.fetchone()
+    
+    if existing:
+        await update.message.reply_text(
+            "❌ У вас уже есть активная заявка на становление администратором"
+        )
+        conn.close()
+        return
+    
+    # Создаем заявку
+    cursor.execute('''
+        INSERT INTO admin_requests 
+        (request_date, user_id, user_name, user_position, user_store, status)
+        VALUES (?, ?, ?, ?, ?, ?)
+    ''', (get_today_date_utc8(), user_id, full_name, position, store, 'pending'))
+    
+    conn.commit()
+    conn.close()
+    
+    await update.message.reply_text(
+        "✅ Заявка на становление администратором отправлена!\n"
+        "Ожидайте решения супер-администратора."
+    )
+    
+    # Уведомляем супер-админов
+    super_admins = get_super_admins()
+    for admin_id, admin_name in super_admins:
+        try:
+            await update.message.bot.send_message(
+                admin_id,
+                f"👑 Новая заявка на становление администратором!\n\n"
+                f"От: {full_name}\n"
+                f"Должность: {position}\n"
+                f"Магазин: {store}\n"
+                f"ID: {user_id}\n\n"
+                f"Используйте 👑 Панель админа для рассмотрения заявки."
+            )
+        except Exception as e:
+            logger.error(f"Failed to notify super admin {admin_id}: {e}")
+
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Отмена текущего действия"""
     await update.message.reply_text(
@@ -4123,7 +4323,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     return ConversationHandler.END
 
-# ИСПРАВЛЕНО: Упрощенная функция запуска
+# Основная функция запуска
 async def main():
     """Упрощенная функция запуска"""
     try:
@@ -4185,7 +4385,7 @@ async def main():
         )
         app.add_handler(custom_period_conv)
         
-        # НОВЫЕ ConversationHandler для управления сменами
+        # ConversationHandler для добавления смен
         add_shift_conv = ConversationHandler(
             entry_points=[CallbackQueryHandler(button_callback, pattern="^add_shift_start$")],
             states={
@@ -4199,6 +4399,7 @@ async def main():
         )
         app.add_handler(add_shift_conv)
         
+        # ConversationHandler для удаления смен
         delete_shift_conv = ConversationHandler(
             entry_points=[CallbackQueryHandler(button_callback, pattern="^delete_shift_start$")],
             states={
@@ -4211,6 +4412,19 @@ async def main():
         )
         app.add_handler(delete_shift_conv)
         
+        # НОВЫЙ ConversationHandler для добавления сотрудников
+        add_employee_conv = ConversationHandler(
+            entry_points=[CallbackQueryHandler(button_callback, pattern="^add_employee_start$")],
+            states={
+                ADD_EMPLOYEE_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_employee_enter_name)],
+                ADD_EMPLOYEE_POSITION: [CallbackQueryHandler(button_callback, pattern="^add_emp_pos_")],
+                ADD_EMPLOYEE_STORE: [CallbackQueryHandler(button_callback, pattern="^add_emp_store_")],
+            },
+            fallbacks=[CommandHandler("cancel", cancel)],
+            allow_reentry=True
+        )
+        app.add_handler(add_employee_conv)
+        
         # Обычные обработчики команд
         app.add_handler(CommandHandler("checkin", checkin))
         app.add_handler(CommandHandler("checkout", checkout))
@@ -4219,7 +4433,7 @@ async def main():
         app.add_handler(CommandHandler("admin", admin_panel))
         app.add_handler(CommandHandler("cancel", cancel_registration))
         
-        # Обработчик текстовых сообщений (для кнопок из нижнего меню и запроса админки)
+        # Обработчик текстовых сообщений
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
         
         # Обработчик callback-запросов
